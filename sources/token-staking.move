@@ -1,6 +1,6 @@
 //! Contract to stake tokens is Aptos
-//! Created by Mokshya Protocol
-module mokshyastaking::tokenstaking
+//! Adapted from a contract created by Movement Protocol
+module movement_staking::tokenstaking
 {
     use std::signer;
     use std::string::{String,append};
@@ -12,7 +12,7 @@ module mokshyastaking::tokenstaking
     use aptos_std::simple_map::{Self, SimpleMap};
     use std::bcs::to_bytes;
 
-    struct MokshyaStaking has key {
+    struct MovementStaking has key {
         collection:String,
         // amount of token paid in a week for staking one token,
         // changed to dpr (daily percentage return)in place of apr addressing demand
@@ -26,7 +26,7 @@ module mokshyastaking::tokenstaking
         //treasury_cap
         treasury_cap:account::SignerCapability,
     }
-    struct MokshyaReward has drop,key {
+    struct MovementReward has drop,key {
         //staker
         staker:address,
         //token_name
@@ -71,13 +71,13 @@ module mokshyastaking::tokenstaking
         let (staking_treasury, staking_treasury_cap) = account::create_resource_account(creator, to_bytes(&collection_name)); //resource account to store funds and data
         let staking_treasur_signer_from_cap = account::create_signer_with_capability(&staking_treasury_cap);
         let staking_address = signer::address_of(&staking_treasury);
-        assert!(!exists<MokshyaStaking>(staking_address),ENO_STAKING_EXISTS);
+        assert!(!exists<MovementStaking>(staking_address),ENO_STAKING_EXISTS);
         create_add_resource_info(creator,collection_name,staking_address);
         managed_coin::register<CoinType>(&staking_treasur_signer_from_cap); 
         //the creator need to make sure the coins are sufficient otherwise the contract
         //turns off the state of the staking
         coin::transfer<CoinType>(creator,staking_address, total_amount);
-        move_to<MokshyaStaking>(&staking_treasur_signer_from_cap, MokshyaStaking{
+        move_to<MovementStaking>(&staking_treasur_signer_from_cap, MovementStaking{
         collection: collection_name,
         dpr:dpr,
         state:true,
@@ -90,40 +90,40 @@ module mokshyastaking::tokenstaking
         creator: &signer,
         dpr:u64,//rate of payment,
         collection_name:String, //the name of the collection owned by Creator 
-    )acquires MokshyaStaking,ResourceInfo 
+    )acquires MovementStaking,ResourceInfo 
     {
         let creator_addr = signer::address_of(creator);
         //verify the creator has the collection
         let staking_address = get_resource_address(creator_addr,collection_name);
-        assert!(exists<MokshyaStaking>(staking_address),ENO_NO_STAKING);// the staking doesn't exists
-        let staking_data = borrow_global_mut<MokshyaStaking>(staking_address);
+        assert!(exists<MovementStaking>(staking_address),ENO_NO_STAKING);// the staking doesn't exists
+        let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         //let staking_treasur_signer_from_cap = account::create_signer_with_capability(&staking_data.treasury_cap);
         staking_data.dpr=dpr;
     }
     public entry fun creator_stop_staking(
         creator: &signer,
         collection_name:String, //the name of the collection owned by Creator 
-    )acquires MokshyaStaking,ResourceInfo
+    )acquires MovementStaking,ResourceInfo
     {
         let creator_addr = signer::address_of(creator);
        //get staking address
         let staking_address = get_resource_address(creator_addr,collection_name);
-        assert!(exists<MokshyaStaking>(staking_address),ENO_NO_STAKING);// the staking doesn't exists
-        let staking_data = borrow_global_mut<MokshyaStaking>(staking_address);
+        assert!(exists<MovementStaking>(staking_address),ENO_NO_STAKING);// the staking doesn't exists
+        let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         staking_data.state=false;
     }
     public entry fun deposit_staking_rewards<CoinType>(
         creator: &signer,
         collection_name:String, //the name of the collection owned by Creator 
         amount:u64,
-    )acquires MokshyaStaking,ResourceInfo
+    )acquires MovementStaking,ResourceInfo
     {
         let creator_addr = signer::address_of(creator);
         //verify the creator has the collection
          assert!(exists<ResourceInfo>(creator_addr), ENO_NO_STAKING);
         let staking_address = get_resource_address(creator_addr,collection_name); 
-        assert!(exists<MokshyaStaking>(staking_address),ENO_NO_STAKING);// the staking doesn't exists       
-        let staking_data = borrow_global_mut<MokshyaStaking>(staking_address);
+        assert!(exists<MovementStaking>(staking_address),ENO_NO_STAKING);// the staking doesn't exists       
+        let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         //the creator need to make sure the coins are sufficient otherwise the contract
         //turns off the state of the staking
         assert!(coin_address<CoinType>()==staking_data.coin_type,ENO_COINTYPE_MISMATCH);
@@ -140,7 +140,7 @@ module mokshyastaking::tokenstaking
         token_name: String,
         property_version: u64,
         tokens:u64,
-    )acquires MokshyaStaking,ResourceInfo,MokshyaReward 
+    )acquires MovementStaking,ResourceInfo,MovementReward 
     {
         let staker_addr = signer::address_of(staker);
         let token_id = token::create_token_id_raw(creator_addr, collection_name, token_name, property_version);
@@ -150,8 +150,8 @@ module mokshyastaking::tokenstaking
         assert!(check_collection_exists(creator_addr,collection_name), ENO_NO_COLLECTION);
         //verifying whether the creator has started the staking or not
         let staking_address = get_resource_address(creator_addr,collection_name);
-        assert!(exists<MokshyaStaking>(staking_address),ENO_NO_STAKING);// the staking doesn't exists
-        let staking_data = borrow_global<MokshyaStaking>(staking_address);
+        assert!(exists<MovementStaking>(staking_address),ENO_NO_STAKING);// the staking doesn't exists
+        let staking_data = borrow_global<MovementStaking>(staking_address);
         assert!(staking_data.state,ENO_STOPPED);
         //seeds as per the tokens
         let seed = collection_name;
@@ -161,8 +161,8 @@ module mokshyastaking::tokenstaking
         let should_pass_restake = check_map(staker_addr,seed);
         if (should_pass_restake) {
             let reward_treasury_address = get_resource_address(staker_addr,seed);
-            assert!(exists<MokshyaReward>(reward_treasury_address),ENO_NO_STAKING);
-            let reward_data = borrow_global_mut<MokshyaReward>(reward_treasury_address);
+            assert!(exists<MovementReward>(reward_treasury_address),ENO_NO_STAKING);
+            let reward_data = borrow_global_mut<MovementReward>(reward_treasury_address);
             let reward_treasury_signer_from_cap = account::create_signer_with_capability(&reward_data.treasury_cap);
             let now = aptos_framework::timestamp::now_seconds();
             reward_data.tokens=tokens;
@@ -174,11 +174,11 @@ module mokshyastaking::tokenstaking
             let (reward_treasury, reward_treasury_cap) = account::create_resource_account(staker, to_bytes(&seed)); //resource account to store funds and data
             let reward_treasury_signer_from_cap = account::create_signer_with_capability(&reward_treasury_cap);
             let reward_treasury_address = signer::address_of(&reward_treasury);
-            assert!(!exists<MokshyaReward>(reward_treasury_address),ENO_STAKING_EXISTS);
+            assert!(!exists<MovementReward>(reward_treasury_address),ENO_STAKING_EXISTS);
             create_add_resource_info(staker,seed,reward_treasury_address);
             let now = aptos_framework::timestamp::now_seconds();
             direct_transfer(staker,&reward_treasury_signer_from_cap,token_id,tokens);
-            move_to<MokshyaReward>(&reward_treasury_signer_from_cap , MokshyaReward{
+            move_to<MovementReward>(&reward_treasury_signer_from_cap , MovementReward{
             staker:staker_addr,
             token_name:token_name,
             collection:collection_name,
@@ -195,12 +195,12 @@ module mokshyastaking::tokenstaking
         collection_name:String, //the name of the collection owned by Creator 
         token_name:String,
         creator:address,
-    ) acquires MokshyaStaking,MokshyaReward,ResourceInfo{
+    ) acquires MovementStaking,MovementReward,ResourceInfo{
         let staker_addr = signer::address_of(staker);
         //verifying whether the creator has started the staking or not
         let staking_address = get_resource_address(creator,collection_name);
-        assert!(exists<MokshyaStaking>(staking_address),ENO_NO_STAKING);// the staking doesn't exists
-        let staking_data = borrow_global_mut<MokshyaStaking>(staking_address);
+        assert!(exists<MovementStaking>(staking_address),ENO_NO_STAKING);// the staking doesn't exists
+        let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         let staking_treasur_signer_from_cap = account::create_signer_with_capability(&staking_data.treasury_cap);
         assert!(staking_data.state,ENO_STOPPED);
         let seed = collection_name;
@@ -208,8 +208,8 @@ module mokshyastaking::tokenstaking
         append(&mut seed,seed2);
          //
         let reward_treasury_address = get_resource_address(staker_addr,seed);
-        assert!(exists<MokshyaReward>(reward_treasury_address),ENO_STAKING_EXISTS);
-        let reward_data = borrow_global_mut<MokshyaReward>(reward_treasury_address);
+        assert!(exists<MovementReward>(reward_treasury_address),ENO_STAKING_EXISTS);
+        let reward_data = borrow_global_mut<MovementReward>(reward_treasury_address);
         assert!(reward_data.staker==staker_addr,ENO_STAKER_MISMATCH);
         let dpr = staking_data.dpr;
         let now = aptos_framework::timestamp::now_seconds();
@@ -234,12 +234,12 @@ module mokshyastaking::tokenstaking
         collection_name: String,
         token_name: String,
         property_version: u64,
-    )acquires MokshyaStaking,MokshyaReward,ResourceInfo{
+    )acquires MovementStaking,MovementReward,ResourceInfo{
         let staker_addr = signer::address_of(staker);
         //verifying whether the creator has started the staking or not
         let staking_address = get_resource_address(creator,collection_name);
-        assert!(exists<MokshyaStaking>(staking_address),ENO_NO_STAKING);// the staking doesn't exists
-        let staking_data = borrow_global_mut<MokshyaStaking>(staking_address);
+        assert!(exists<MovementStaking>(staking_address),ENO_NO_STAKING);// the staking doesn't exists
+        let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         let staking_treasur_signer_from_cap = account::create_signer_with_capability(&staking_data.treasury_cap);
         assert!(staking_data.state,ENO_STOPPED);
         //getting the seeds
@@ -248,8 +248,8 @@ module mokshyastaking::tokenstaking
         append(&mut seed,seed2);
         //getting reward treasury address which has the tokens
         let reward_treasury_address = get_resource_address(staker_addr,seed);
-        assert!(exists<MokshyaReward>(reward_treasury_address),ENO_STAKING_EXISTS);
-        let reward_data = borrow_global_mut<MokshyaReward>(reward_treasury_address);
+        assert!(exists<MovementReward>(reward_treasury_address),ENO_STAKING_EXISTS);
+        let reward_data = borrow_global_mut<MovementReward>(reward_treasury_address);
         let reward_treasury_signer_from_cap = account::create_signer_with_capability(&reward_data.treasury_cap);
         assert!(reward_data.staker==staker_addr,ENO_STAKER_MISMATCH);
         let dpr = staking_data.dpr;
@@ -322,31 +322,31 @@ module mokshyastaking::tokenstaking
     use std::bcs;
     #[test_only] 
     use aptos_framework::timestamp;
-    struct MokshyaMoney { }
-    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @mokshyastaking)]
+    struct MovementMoney { }
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
    fun test_create_staking(
         creator: signer,
         receiver: signer,
         token_staking: signer
-    )acquires ResourceInfo,MokshyaStaking{
+    )acquires ResourceInfo,MovementStaking{
        let sender_addr = signer::address_of(&creator);
        let receiver_addr = signer::address_of(&receiver);
         aptos_framework::account::create_account_for_test(sender_addr);
         aptos_framework::account::create_account_for_test(receiver_addr);
-        aptos_framework::managed_coin::initialize<MokshyaMoney>(
+        aptos_framework::managed_coin::initialize<MovementMoney>(
             &token_staking,
-            b"Mokshya Money",
+            b"Movement Money",
             b"MOK",
             10,
             true
         );
-       aptos_framework::managed_coin::register<MokshyaMoney>(&creator);
-       aptos_framework::managed_coin::mint<MokshyaMoney>(&token_staking,sender_addr,100);   
+       aptos_framework::managed_coin::register<MovementMoney>(&creator);
+       aptos_framework::managed_coin::mint<MovementMoney>(&token_staking,sender_addr,100);   
        create_collection(
             &creator,
-            string::utf8(b"Mokshya Collection"),
+            string::utf8(b"Movement Collection"),
             string::utf8(b"Collection for Test"),
-            string::utf8(b"https://github.com/mokshyaprotocol"),
+            string::utf8(b"https://github.com/movementprotocol"),
             2,
             vector<bool>[false, false, false],
         );
@@ -356,12 +356,12 @@ module mokshyastaking::tokenstaking
         let mutate_setting = vector<bool>[false, false, false, false, false];
         create_token_script(
             &creator,
-            string::utf8(b"Mokshya Collection"),
-            string::utf8(b"Mokshya Token #1"),
+            string::utf8(b"Movement Collection"),
+            string::utf8(b"Movement Token #1"),
             string::utf8(b"Collection for Test"),
             2,
             5,
-            string::utf8(b"mokshya.io"),
+            string::utf8(b"movement.io"),
             signer::address_of(&creator),
             100,
             0,
@@ -370,44 +370,44 @@ module mokshyastaking::tokenstaking
             default_vals,
             default_types,
         );
-        let token_id=create_token_id_raw(signer::address_of(&creator), string::utf8(b"Mokshya Collection"), 
-        string::utf8(b"Mokshya Token #1"), 0);
+        let token_id=create_token_id_raw(signer::address_of(&creator), string::utf8(b"Movement Collection"), 
+        string::utf8(b"Movement Token #1"), 0);
         let token = withdraw_token(&creator, token_id, 1);
         deposit_token(&receiver, token);
-        create_staking<MokshyaMoney>(
+        create_staking<MovementMoney>(
                &creator,
                20,
-               string::utf8(b"Mokshya Collection"),
+               string::utf8(b"Movement Collection"),
                90);
         update_dpr(
              &creator,
              30,
-            string::utf8(b"Mokshya Collection"),
+            string::utf8(b"Movement Collection"),
         );
         creator_stop_staking(
              &creator,
-             string::utf8(b"Mokshya Collection"),
+             string::utf8(b"Movement Collection"),
         );
-        let resource_address= get_resource_address(sender_addr,string::utf8(b"Mokshya Collection"));
-        let staking_data = borrow_global<MokshyaStaking>(resource_address);
+        let resource_address= get_resource_address(sender_addr,string::utf8(b"Movement Collection"));
+        let staking_data = borrow_global<MovementStaking>(resource_address);
         assert!(staking_data.state==false,98);
-        deposit_staking_rewards<MokshyaMoney>(
+        deposit_staking_rewards<MovementMoney>(
                &creator,
-               string::utf8(b"Mokshya Collection"),
+               string::utf8(b"Movement Collection"),
                5
         );
-        let staking_data = borrow_global<MokshyaStaking>(resource_address);
+        let staking_data = borrow_global<MovementStaking>(resource_address);
         assert!(staking_data.state==true,88);
         assert!(staking_data.dpr==30,78);
         assert!(staking_data.amount==95,68);
     } 
-    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @mokshyastaking,framework = @0x1)]
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking,framework = @0x1)]
     fun test_staking_token(
         creator: signer,
         receiver: signer,
         token_staking: signer,
         framework: signer,
-    )acquires ResourceInfo,MokshyaStaking,MokshyaReward{
+    )acquires ResourceInfo,MovementStaking,MovementReward{
        let sender_addr = signer::address_of(&creator);
        let receiver_addr = signer::address_of(&receiver);
        // set up global time for testing purpose
@@ -416,21 +416,21 @@ module mokshyastaking::tokenstaking
         aptos_framework::account::create_account_for_test(sender_addr);
         aptos_framework::account::create_account_for_test(receiver_addr);
         // create reward coin
-        aptos_framework::managed_coin::initialize<MokshyaMoney>(
+        aptos_framework::managed_coin::initialize<MovementMoney>(
             &token_staking,
-            b"Mokshya Money",
+            b"Movement Money",
             b"MOK",
             10,
             true
         );
-        aptos_framework::managed_coin::register<MokshyaMoney>(&creator);
-        aptos_framework::managed_coin::mint<MokshyaMoney>(&token_staking,sender_addr,100); 
+        aptos_framework::managed_coin::register<MovementMoney>(&creator);
+        aptos_framework::managed_coin::mint<MovementMoney>(&token_staking,sender_addr,100); 
         //create collection  
         create_collection(
             &creator,
-            string::utf8(b"Mokshya Collection"),
+            string::utf8(b"Movement Collection"),
             string::utf8(b"Collection for Test"),
-            string::utf8(b"https://github.com/mokshyaprotocol"),
+            string::utf8(b"https://github.com/movementprotocol"),
             2,
             vector<bool>[false, false, false],
         );
@@ -442,8 +442,8 @@ module mokshyastaking::tokenstaking
         //create token
         create_token_script(
             &creator,
-            string::utf8(b"Mokshya Collection"),
-            string::utf8(b"Mokshya Token #1"),
+            string::utf8(b"Movement Collection"),
+            string::utf8(b"Movement Token #1"),
             string::utf8(b"Collection for Test"),
             2,
             5,
@@ -456,43 +456,43 @@ module mokshyastaking::tokenstaking
             default_vals,
             default_types,
         );
-        let token_id=create_token_id_raw(signer::address_of(&creator), string::utf8(b"Mokshya Collection"), 
-        string::utf8(b"Mokshya Token #1"), 0);
+        let token_id=create_token_id_raw(signer::address_of(&creator), string::utf8(b"Movement Collection"), 
+        string::utf8(b"Movement Token #1"), 0);
         let token = withdraw_token(&creator, token_id, 1);
         deposit_token(&receiver, token);
-        create_staking<MokshyaMoney>(
+        create_staking<MovementMoney>(
                &creator,
                20,
-               string::utf8(b"Mokshya Collection"),
+               string::utf8(b"Movement Collection"),
                90);
         stake_token(
             &receiver,
             sender_addr,
-            string::utf8(b"Mokshya Collection"),
-            string::utf8(b"Mokshya Token #1"),
+            string::utf8(b"Movement Collection"),
+            string::utf8(b"Movement Token #1"),
             0,
             1);
-        let seed = string::utf8(b"Mokshya Collection");
-        let seed2 = string::utf8(b"Mokshya Token #1");
+        let seed = string::utf8(b"Movement Collection");
+        let seed2 = string::utf8(b"Movement Token #1");
         append(&mut seed,seed2);
         let reward_treasury_address = get_resource_address(receiver_addr,seed);
         assert!(balance_of(reward_treasury_address,token_id)==1,99);
         assert!(balance_of(receiver_addr,token_id)==0,89);
-        claim_reward<MokshyaMoney>(
+        claim_reward<MovementMoney>(
             &receiver,
-            string::utf8(b"Mokshya Collection"),
-            string::utf8(b"Mokshya Token #1"),
+            string::utf8(b"Movement Collection"),
+            string::utf8(b"Movement Token #1"),
             sender_addr,
         );
-        unstake_token<MokshyaMoney>( 
+        unstake_token<MovementMoney>( 
             &receiver,
             sender_addr,
-            string::utf8(b"Mokshya Collection"),
-            string::utf8(b"Mokshya Token #1"),
+            string::utf8(b"Movement Collection"),
+            string::utf8(b"Movement Token #1"),
             0);
         assert!(balance_of(receiver_addr,token_id)==1,79);
         assert!(balance_of(reward_treasury_address,token_id)==0,69);
-        let reward_data = borrow_global<MokshyaReward>(reward_treasury_address);
+        let reward_data = borrow_global<MovementReward>(reward_treasury_address);
         assert!(reward_data.start_time==0,59);
         assert!(reward_data.tokens==0,59);
         assert!(reward_data.withdraw_amount==0,59);
@@ -501,8 +501,8 @@ module mokshyastaking::tokenstaking
         stake_token(
             &receiver,
             sender_addr,
-            string::utf8(b"Mokshya Collection"),
-            string::utf8(b"Mokshya Token #1"),
+            string::utf8(b"Movement Collection"),
+            string::utf8(b"Movement Token #1"),
             0,
             1);
         assert!(balance_of(reward_treasury_address,token_id)==1,49);

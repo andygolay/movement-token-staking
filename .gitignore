@@ -1,3 +1,4 @@
 build/
 .aptos
+.movement
 node_modules

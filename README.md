@@ -9,12 +9,12 @@ aptos init
 # Test
 
 ``` 
-aptos move test --named-addresses mokshyastaking=your_address
+aptos move test --named-addresses movement_staking=your_address
 ```
 # Publish
 
 ```
- aptos move publish --named-addresses mokshyastaking=your_address
+ aptos move publish --named-addresses movement_staking=your_address
 ```
 Copy the account address and replace in tests/staking.ts
 # Set Up

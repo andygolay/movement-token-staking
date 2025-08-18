@@ -1,19 +1,18 @@
 
-import { HexString,AptosClient, Provider,Network,TxnBuilderTypes, BCS } from "aptos";
+import { AptosClient, BCS, HexString, Network, Provider, TxnBuilderTypes } from "aptos";
 
 
 
-export class StakingClient
-{
+export class StakingClient {
   client: AptosClient;
   pid: string;
-  provider:Provider;
+  provider: Provider;
 
-  constructor(nodeUrl: string, pid:string,network:Network) {
+  constructor(nodeUrl: string, pid: string, network: Network) {
     this.client = new AptosClient(nodeUrl);
     // Initialize the module owner account here
     this.pid = pid
-    this.provider= new Provider(network)
+    this.provider = new Provider(network)
   }
   /**
    * Create Staking
@@ -33,9 +32,9 @@ export class StakingClient
     typeArgs: string,
   ): Promise<TxnBuilderTypes.RawTransaction> {
     return await this.provider.generateTransaction(stakingCreator, {
-      function: `${this.pid}::mokshyastaking::create_staking`,
+      function: `${this.pid}::movement_staking::create_staking`,
       type_arguments: [typeArgs],
-      arguments: [dpr,collectionName, collectionName,totalAmount],
+      arguments: [dpr, collectionName, collectionName, totalAmount],
     });
   }
   /**
@@ -47,77 +46,77 @@ export class StakingClient
    */
   // :!:>updateDPR
   async updateDPR(
-    stakingCreator:HexString,
+    stakingCreator: HexString,
     dpr: BCS.AnyNumber,
     collectionName: string,
-    ): Promise<TxnBuilderTypes.RawTransaction> {
-      return await this.provider.generateTransaction(stakingCreator, {
-        function: `${this.pid}::mokshyastaking::update_dpr`,
-        type_arguments: [],
-        arguments: [dpr,collectionName,],
-      });
+  ): Promise<TxnBuilderTypes.RawTransaction> {
+    return await this.provider.generateTransaction(stakingCreator, {
+      function: `${this.pid}::movement_staking::update_dpr`,
+      type_arguments: [],
+      arguments: [dpr, collectionName,],
+    });
   }
-    /**
-   *  creatorStopStaking
-   * @param  stakingCreator staking creator
-   * @param collectionName Collection name
-   * @returns Promise<TxnBuilderTypes.RawTransaction>
-   */
+  /**
+ *  creatorStopStaking
+ * @param  stakingCreator staking creator
+ * @param collectionName Collection name
+ * @returns Promise<TxnBuilderTypes.RawTransaction>
+ */
   // :!:>creatorStopStaking
   async creatorStopStaking(
-    stakingCreator:HexString,
+    stakingCreator: HexString,
     collectionName: string,
-    ): Promise<TxnBuilderTypes.RawTransaction> {
-      return await this.provider.generateTransaction(stakingCreator, {
-        function: `${this.pid}::mokshyastaking::creator_stop_staking`,
-        type_arguments: [],
-        arguments: [collectionName,],
-      });
+  ): Promise<TxnBuilderTypes.RawTransaction> {
+    return await this.provider.generateTransaction(stakingCreator, {
+      function: `${this.pid}::movement_staking::creator_stop_staking`,
+      type_arguments: [],
+      arguments: [collectionName,],
+    });
   }
-    /**
-   *  deposit_staking_rewards
-   * @param  stakingCreator staking creator
-   * @param amount additional staking rewards
-   * @param collectionName Collection name
-   * @param typeArgs Type Arguments
-   * @returns Promise<TxnBuilderTypes.RawTransaction>
-   */
+  /**
+ *  deposit_staking_rewards
+ * @param  stakingCreator staking creator
+ * @param amount additional staking rewards
+ * @param collectionName Collection name
+ * @param typeArgs Type Arguments
+ * @returns Promise<TxnBuilderTypes.RawTransaction>
+ */
   // :!:>deposit_staking_rewards
   async depositStakingRewards(
-    stakingCreator:HexString,
+    stakingCreator: HexString,
     amount: BCS.AnyNumber,
     collectionName: string,
     typeArgs: string,
-    ): Promise<TxnBuilderTypes.RawTransaction> {
-      return await this.provider.generateTransaction(stakingCreator, {
-        function: `${this.pid}::mokshyastaking::deposit_staking_rewards`,
-        type_arguments: [typeArgs],
-        arguments: [collectionName,amount,],
-      });
+  ): Promise<TxnBuilderTypes.RawTransaction> {
+    return await this.provider.generateTransaction(stakingCreator, {
+      function: `${this.pid}::movement_staking::deposit_staking_rewards`,
+      type_arguments: [typeArgs],
+      arguments: [collectionName, amount,],
+    });
   }
-   /**
-   *  Staking
-   * @param staker Who stakes token
-   * @param stakingCreator staking creator
-   * @param collectionName Collection name
-   * @param tokenName Token name
-   * @param propertyVersion token property version
-   * @param tokens number of tokens to be staked
-   * @returns Promise<TxnBuilderTypes.RawTransaction>
-   */
+  /**
+  *  Staking
+  * @param staker Who stakes token
+  * @param stakingCreator staking creator
+  * @param collectionName Collection name
+  * @param tokenName Token name
+  * @param propertyVersion token property version
+  * @param tokens number of tokens to be staked
+  * @returns Promise<TxnBuilderTypes.RawTransaction>
+  */
   // :!:>stakeToken
   async stakeToken(
     staker: HexString,
     stakingCreator: HexString,
     collectionName: string,
-    tokenName:string,
+    tokenName: string,
     propertyVersion: BCS.AnyNumber,
     tokens: BCS.AnyNumber,
   ): Promise<TxnBuilderTypes.RawTransaction> {
     return await this.provider.generateTransaction(staker, {
-      function: `${this.pid}::mokshyastaking::stake_token`,
+      function: `${this.pid}::movement_staking::stake_token`,
       type_arguments: [],
-      arguments: [stakingCreator,collectionName,tokenName,propertyVersion,tokens],
+      arguments: [stakingCreator, collectionName, tokenName, propertyVersion, tokens],
     });
   }
   /**
@@ -133,37 +132,37 @@ export class StakingClient
     staker: HexString,
     stakingCreator: HexString,
     collectionName: string,
-    tokenName:string,
+    tokenName: string,
   ): Promise<TxnBuilderTypes.RawTransaction> {
     return await this.provider.generateTransaction(staker, {
-      function: `${this.pid}::mokshyastaking::claim_reward`,
+      function: `${this.pid}::movement_staking::claim_reward`,
       type_arguments: [],
-      arguments: [collectionName,tokenName,stakingCreator,],
+      arguments: [collectionName, tokenName, stakingCreator,],
     });
   }
-      /**
-   *  UnStaking
-   * @param staker Who stakes token
-   * @param stakingCreator staking creator
-   * @param collectionName Collection name
-   * @param tokenName Token name
-   * @param propertyVersion token property version
-   * @param typeArgs type Arguments
-   * @returns Promise<TxnBuilderTypes.RawTransaction>
-   */
+  /**
+*  UnStaking
+* @param staker Who stakes token
+* @param stakingCreator staking creator
+* @param collectionName Collection name
+* @param tokenName Token name
+* @param propertyVersion token property version
+* @param typeArgs type Arguments
+* @returns Promise<TxnBuilderTypes.RawTransaction>
+*/
   // :!:>unstakeToken
   async unstakeToken(
     staker: HexString,
     stakingCreator: HexString,
     collectionName: string,
-    tokenName:string,
+    tokenName: string,
     propertyVersion: BCS.AnyNumber,
     typeArgs: string,
   ): Promise<TxnBuilderTypes.RawTransaction> {
     return await this.provider.generateTransaction(staker, {
-      function: `${this.pid}::mokshyastaking::unstake_token`,
+      function: `${this.pid}::movement_staking::unstake_token`,
       type_arguments: [typeArgs],
-      arguments: [stakingCreator,collectionName,tokenName,propertyVersion,],
+      arguments: [stakingCreator, collectionName, tokenName, propertyVersion,],
     });
   }
 }

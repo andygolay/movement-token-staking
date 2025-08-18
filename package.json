@@ -1,5 +1,5 @@
 {
-    "name": "mokshya-staking",
+    "name": "movement-staking",
     "version": "1.0.0",
     "description": "This repository is in development phase.",
     "main": "tests/staking.ts",
