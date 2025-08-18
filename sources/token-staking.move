@@ -5,10 +5,10 @@ module movement_staking::tokenstaking
     use std::signer;
     use std::string::{String, append};
     use aptos_framework::account;
-    use aptos_framework::coin;
-    use aptos_framework::managed_coin;
+    use aptos_framework::fungible_asset;
+    use aptos_framework::primary_fungible_store;
+    use aptos_framework::object::{Object};
     use aptos_token::token::{Self, check_collection_exists, balance_of, direct_transfer};
-    use aptos_std::type_info;
     use aptos_std::simple_map::{Self, SimpleMap};
     use std::bcs::to_bytes;
 
@@ -21,8 +21,8 @@ module movement_staking::tokenstaking
         state: bool,
         //the amount stored in the vault to distribute for token staking
         amount: u64,
-        //the coin_type in which the staking rewards are paid
-        coin_type: address, 
+        //the FA metadata object in which the staking rewards are paid
+        metadata: Object<fungible_asset::Metadata>, 
         //treasury_cap
         treasury_cap: account::SignerCapability,
     }
@@ -50,7 +50,7 @@ module movement_staking::tokenstaking
     const ENO_NO_STAKING: u64=2;
     const ENO_NO_TOKEN_IN_TOKEN_STORE: u64=3;
     const ENO_STOPPED: u64=4;
-    const ENO_COINTYPE_MISMATCH: u64=5;
+    const ENO_METADATA_MISMATCH: u64=5;
     const ENO_STAKER_MISMATCH: u64=6;
     const ENO_INSUFFICIENT_FUND: u64=7;
     const ENO_INSUFFICIENT_TOKENS: u64=7;
@@ -58,11 +58,12 @@ module movement_staking::tokenstaking
 
     //Functions    
     //Function for creating and modifying staking
-    public entry fun create_staking<CoinType>(
+    public entry fun create_staking(
         creator: &signer,
         dpr: u64,//rate of payment,
         collection_name: String, //the name of the collection owned by Creator 
         total_amount: u64,
+        metadata: Object<fungible_asset::Metadata>,
     ) acquires ResourceInfo{
         let creator_addr = signer::address_of(creator);
         //verify the creator has the collection
@@ -73,16 +74,14 @@ module movement_staking::tokenstaking
         let staking_address = signer::address_of(&staking_treasury);
         assert!(!exists<MovementStaking>(staking_address), ENO_STAKING_EXISTS);
         create_add_resource_info(creator, collection_name, staking_address);
-        managed_coin::register<CoinType>(&staking_treasury_signer_from_cap); 
-        //the creator need to make sure the coins are sufficient otherwise the contract
-        //turns off the state of the staking
-        coin::transfer<CoinType>(creator, staking_address, total_amount);
+        // the creator needs to transfer FA into the staking treasury
+        primary_fungible_store::transfer(creator, metadata, staking_address, total_amount);
         move_to<MovementStaking>(&staking_treasury_signer_from_cap, MovementStaking{
         collection: collection_name,
         dpr: dpr,
         state: true,
         amount: total_amount,
-        coin_type: coin_address<CoinType>(), 
+        metadata: metadata, 
         treasury_cap: staking_treasury_cap,
         });
     }
@@ -111,7 +110,7 @@ module movement_staking::tokenstaking
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         staking_data.state=false;
     }
-    public entry fun deposit_staking_rewards<CoinType>(
+    public entry fun deposit_staking_rewards(
         creator: &signer,
         collection_name: String, //the name of the collection owned by Creator 
         amount: u64,
@@ -123,10 +122,8 @@ module movement_staking::tokenstaking
         let staking_address = get_resource_address(creator_addr, collection_name); 
         assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists       
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
-        //the creator need to make sure the coins are sufficient otherwise the contract
-        //turns off the state of the staking
-        assert!(coin_address<CoinType>()==staking_data.coin_type, ENO_COINTYPE_MISMATCH);
-        coin::transfer<CoinType>(creator, staking_address, amount);
+        // Transfer FA from creator to staking treasury store
+        primary_fungible_store::transfer(creator, staking_data.metadata, staking_address, amount);
         staking_data.amount= staking_data.amount+amount;
         staking_data.state=true;
         
@@ -189,7 +186,7 @@ module movement_staking::tokenstaking
         };
 
     }
-    public entry fun claim_reward<CoinType>(
+    public entry fun claim_reward(
         staker: &signer, 
         collection_name: String, //the name of the collection owned by Creator 
         token_name: String,
@@ -205,7 +202,6 @@ module movement_staking::tokenstaking
         let seed = collection_name;
         let seed2 = token_name;
         append(&mut seed, seed2);
-         //
         let reward_treasury_address = get_resource_address(staker_addr, seed);
         assert!(exists<MovementReward>(reward_treasury_address), ENO_STAKING_EXISTS);
         let reward_data = borrow_global_mut<MovementReward>(reward_treasury_address);
@@ -214,20 +210,16 @@ module movement_staking::tokenstaking
         let now = aptos_framework::timestamp::now_seconds();
         let reward = (((now-reward_data.start_time)*dpr)/86400)*reward_data.tokens;
         let release_amount = reward - reward_data.withdraw_amount;
-        assert!(coin_address<CoinType>()==staking_data.coin_type, ENO_COINTYPE_MISMATCH);
         if (staking_data.amount<release_amount)
         {
             staking_data.state=false;
             assert!(staking_data.amount>release_amount, ENO_INSUFFICIENT_FUND);
         };
-        if (!coin::is_account_registered<CoinType>(staker_addr))
-        {managed_coin::register<CoinType>(staker); 
-        };
-        coin::transfer<CoinType>(&staking_treasury_signer_from_cap, staker_addr, release_amount);
+        primary_fungible_store::transfer(&staking_treasury_signer_from_cap, staking_data.metadata, staker_addr, release_amount);
         staking_data.amount=staking_data.amount-release_amount;
         reward_data.withdraw_amount=reward_data.withdraw_amount+release_amount;
     }
-    public entry fun unstake_token<CoinType>
+    public entry fun unstake_token
     (   staker: &signer, 
         creator: address,
         collection_name: String,
@@ -255,7 +247,6 @@ module movement_staking::tokenstaking
         let now = aptos_framework::timestamp::now_seconds();
         let reward = ((now-reward_data.start_time)*dpr*reward_data.tokens)/86400;
         let release_amount = reward - reward_data.withdraw_amount;
-        assert!(coin_address<CoinType>()==staking_data.coin_type, ENO_COINTYPE_MISMATCH);
         let token_id = token::create_token_id_raw(creator, collection_name, token_name, property_version);
         let balanceToken = balance_of(reward_treasury_address, token_id);
         assert!(balanceToken>=reward_data.tokens, ENO_INSUFFICIENT_TOKENS);
@@ -265,11 +256,7 @@ module movement_staking::tokenstaking
         };
         if (staking_data.amount>release_amount)
         {
-        if (!coin::is_account_registered<CoinType>(staker_addr))
-            {
-                managed_coin::register<CoinType>(staker); 
-            };
-        coin::transfer<CoinType>(&staking_treasury_signer_from_cap, staker_addr, release_amount);
+        primary_fungible_store::transfer(&staking_treasury_signer_from_cap, staking_data.metadata, staker_addr, release_amount);
         staking_data.amount=staking_data.amount-release_amount;
         direct_transfer(&reward_treasury_signer_from_cap, staker, token_id, reward_data.tokens);
         };
@@ -278,10 +265,6 @@ module movement_staking::tokenstaking
         reward_data.withdraw_amount=0;
     }
     /// A helper functions
-    fun coin_address<CoinType>(): address {
-        let type_info = type_info::type_of<CoinType>();
-        type_info::account_address(&type_info)
-    }
     fun create_add_resource_info(account: &signer, string: String, resource: address) acquires ResourceInfo
     {
         let account_addr = signer::address_of(account);
@@ -321,192 +304,187 @@ module movement_staking::tokenstaking
     use std::bcs;
     #[test_only] 
     use aptos_framework::timestamp;
-    struct MovementMoney { }
+    #[test_only]
+    use aptos_framework::fungible_asset::{create_test_token, mint_ref_metadata};
+    #[test_only]
+    use aptos_framework::primary_fungible_store::{Self as pfs, init_test_metadata_with_primary_store_enabled};
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
    fun test_create_staking(
-        creator: signer,
-        receiver: signer,
-        token_staking: signer
-    )acquires ResourceInfo, MovementStaking{
-       let sender_addr = signer::address_of(&creator);
-       let receiver_addr = signer::address_of(&receiver);
-        aptos_framework::account::create_account_for_test(sender_addr);
-        aptos_framework::account::create_account_for_test(receiver_addr);
-        aptos_framework::managed_coin::initialize<MovementMoney>(
-            &token_staking,
-            b"Movement Money",
-            b"MOK",
-            10,
-            true
-        );
-       aptos_framework::managed_coin::register<MovementMoney>(&creator);
-       aptos_framework::managed_coin::mint<MovementMoney>(&token_staking, sender_addr, 100);   
-       create_collection(
-            &creator,
-            string::utf8(b"Movement Collection"),
-            string::utf8(b"Collection for Test"),
-            string::utf8(b"https://github.com/movementprotocol"),
-            2,
-            vector<bool>[false, false, false],
-        );
-        let default_keys = vector<String>[string::utf8(b"attack"), string::utf8(b"num_of_use")]; 
-        let default_vals = vector<vector<u8>>[bcs::to_bytes<u64>(&10), bcs::to_bytes<u64>(&5)];
-        let default_types = vector<String>[string::utf8(b"u64"), string::utf8(b"u64")];
-        let mutate_setting = vector<bool>[false, false, false, false, false];
-        create_token_script(
-            &creator,
-            string::utf8(b"Movement Collection"),
-            string::utf8(b"Movement Token #1"),
-            string::utf8(b"Collection for Test"),
-            2,
-            5,
-            string::utf8(b"movement.io"),
-            signer::address_of(&creator),
-            100,
-            0,
-            mutate_setting,
-            default_keys,
-            default_vals,
-            default_types,
-        );
-        let token_id=create_token_id_raw(signer::address_of(&creator), string::utf8(b"Movement Collection"), 
-        string::utf8(b"Movement Token #1"), 0);
-        let token = withdraw_token(&creator, token_id, 1);
-        deposit_token(&receiver, token);
-        create_staking<MovementMoney>(
-               &creator,
-               20,
-               string::utf8(b"Movement Collection"),
-               90);
-        update_dpr(
-             &creator,
-             30,
-            string::utf8(b"Movement Collection"),
-        );
-        creator_stop_staking(
-             &creator,
-             string::utf8(b"Movement Collection"),
-        );
-        let resource_address= get_resource_address(sender_addr, string::utf8(b"Movement Collection"));
-        let staking_data = borrow_global<MovementStaking>(resource_address);
-        assert!(staking_data.state==false, 98);
-        deposit_staking_rewards<MovementMoney>(
-               &creator,
-               string::utf8(b"Movement Collection"),
-               5
-        );
-        let staking_data = borrow_global<MovementStaking>(resource_address);
-        assert!(staking_data.state==true, 88);
-        assert!(staking_data.dpr==30, 78);
-        assert!(staking_data.amount==95, 68);
-    } 
-    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
-    fun test_staking_token(
-        creator: signer,
-        receiver: signer,
-        token_staking: signer,
-        framework: signer,
-    )acquires ResourceInfo, MovementStaking, MovementReward{
-       let sender_addr = signer::address_of(&creator);
-       let receiver_addr = signer::address_of(&receiver);
-       // set up global time for testing purpose
-        timestamp::set_time_has_started_for_testing(&framework);
-       // create accounts 
-        aptos_framework::account::create_account_for_test(sender_addr);
-        aptos_framework::account::create_account_for_test(receiver_addr);
-        // create reward coin
-        aptos_framework::managed_coin::initialize<MovementMoney>(
-            &token_staking,
-            b"Movement Money",
-            b"MOK",
-            10,
-            true
-        );
-        aptos_framework::managed_coin::register<MovementMoney>(&creator);
-        aptos_framework::managed_coin::mint<MovementMoney>(&token_staking, sender_addr, 100); 
-        //create collection  
-        create_collection(
-            &creator,
-            string::utf8(b"Movement Collection"),
-            string::utf8(b"Collection for Test"),
-            string::utf8(b"https://github.com/movementprotocol"),
-            2,
-            vector<bool>[false, false, false],
-        );
-        //token data
-        let default_keys = vector<String>[string::utf8(b"attack"), string::utf8(b"num_of_use")]; 
-        let default_vals = vector<vector<u8>>[bcs::to_bytes<u64>(&10), bcs::to_bytes<u64>(&5)];
-        let default_types = vector<String>[string::utf8(b"u64"), string::utf8(b"u64")];
-        let mutate_setting = vector<bool>[false, false, false, false, false];
-        //create token
-        create_token_script(
-            &creator,
-            string::utf8(b"Movement Collection"),
-            string::utf8(b"Movement Token #1"),
-            string::utf8(b"Collection for Test"),
-            2,
-            5,
-            string::utf8(b"https://aptos.dev"),
-            signer::address_of(&creator),
-            100,
-            0,
-            mutate_setting,
-            default_keys,
-            default_vals,
-            default_types,
-        );
-        let token_id=create_token_id_raw(signer::address_of(&creator), string::utf8(b"Movement Collection"), 
-        string::utf8(b"Movement Token #1"), 0);
-        let token = withdraw_token(&creator, token_id, 1);
-        deposit_token(&receiver, token);
-        create_staking<MovementMoney>(
-               &creator,
-               20,
-               string::utf8(b"Movement Collection"),
-               90);
-        stake_token(
-            &receiver,
-            sender_addr,
-            string::utf8(b"Movement Collection"),
-            string::utf8(b"Movement Token #1"),
-            0,
-            1);
-        let seed = string::utf8(b"Movement Collection");
-        let seed2 = string::utf8(b"Movement Token #1");
-        append(&mut seed, seed2);
-        let reward_treasury_address = get_resource_address(receiver_addr, seed);
-        assert!(balance_of(reward_treasury_address, token_id)==1, 99);
-        assert!(balance_of(receiver_addr, token_id)==0, 89);
-        claim_reward<MovementMoney>(
-            &receiver,
-            string::utf8(b"Movement Collection"),
-            string::utf8(b"Movement Token #1"),
-            sender_addr,
-        );
-        unstake_token<MovementMoney>( 
-            &receiver,
-            sender_addr,
-            string::utf8(b"Movement Collection"),
-            string::utf8(b"Movement Token #1"),
-            0);
-        assert!(balance_of(receiver_addr, token_id)==1, 79);
-        assert!(balance_of(reward_treasury_address, token_id)==0, 69);
-        let reward_data = borrow_global<MovementReward>(reward_treasury_address);
-        assert!(reward_data.start_time==0, 59);
-        assert!(reward_data.tokens==0, 59);
-        assert!(reward_data.withdraw_amount==0, 59);
+		creator: signer,
+		receiver: signer,
+		token_staking: signer
+	)acquires ResourceInfo, MovementStaking{
+	   let sender_addr = signer::address_of(&creator);
+	   let receiver_addr = signer::address_of(&receiver);
+		aptos_framework::account::create_account_for_test(sender_addr);
+		aptos_framework::account::create_account_for_test(receiver_addr);
+		let (creator_ref, _token_obj) = create_test_token(&token_staking);
+		let (mint_ref, _transfer_ref, _burn_ref) = init_test_metadata_with_primary_store_enabled(&creator_ref);
+		let metadata = mint_ref_metadata(&mint_ref);
+		pfs::mint(&mint_ref, sender_addr, 100);
+		create_collection(
+			&creator,
+			string::utf8(b"Movement Collection"),
+			string::utf8(b"Collection for Test"),
+			string::utf8(b"https://github.com/movementprotocol"),
+			2,
+			vector<bool>[false, false, false],
+		);
+		let default_keys = vector<String>[string::utf8(b"attack"), string::utf8(b"num_of_use")]; 
+		let default_vals = vector<vector<u8>>[bcs::to_bytes<u64>(&10), bcs::to_bytes<u64>(&5)];
+		let default_types = vector<String>[string::utf8(b"u64"), string::utf8(b"u64")];
+		let mutate_setting = vector<bool>[false, false, false, false, false];
+		create_token_script(
+			&creator,
+			string::utf8(b"Movement Collection"),
+			string::utf8(b"Movement Token #1"),
+			string::utf8(b"Collection for Test"),
+			2,
+			5,
+			string::utf8(b"movement.io"),
+			signer::address_of(&creator),
+			100,
+			0,
+			mutate_setting,
+			default_keys,
+			default_vals,
+			default_types,
+		);
+		let token_id=create_token_id_raw(signer::address_of(&creator), string::utf8(b"Movement Collection"), 
+		string::utf8(b"Movement Token #1"), 0);
+		let token = withdraw_token(&creator, token_id, 1);
+		deposit_token(&receiver, token);
+		create_staking(
+			   &creator,
+			   20,
+			   string::utf8(b"Movement Collection"),
+			   90,
+			   metadata);
+		update_dpr(
+				&creator,
+				30,
+			   string::utf8(b"Movement Collection"),
+		);
+		creator_stop_staking(
+				&creator,
+				string::utf8(b"Movement Collection"),
+		);
+		let resource_address= get_resource_address(sender_addr, string::utf8(b"Movement Collection"));
+		let staking_data = borrow_global<MovementStaking>(resource_address);
+		assert!(staking_data.state==false, 98);
+		deposit_staking_rewards(
+			   &creator,
+			   string::utf8(b"Movement Collection"),
+			   5
+		);
+		let staking_data = borrow_global<MovementStaking>(resource_address);
+		assert!(staking_data.state==true, 88);
+		assert!(staking_data.dpr==30, 78);
+		assert!(staking_data.amount==95, 68);
+	} 
+	#[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
+	fun test_staking_token(
+		creator: signer,
+		receiver: signer,
+		token_staking: signer,
+		framework: signer,
+	)acquires ResourceInfo, MovementStaking, MovementReward{
+	   let sender_addr = signer::address_of(&creator);
+	   let receiver_addr = signer::address_of(&receiver);
+	   // set up global time for testing purpose
+		timestamp::set_time_has_started_for_testing(&framework);
+	   // create accounts 
+		aptos_framework::account::create_account_for_test(sender_addr);
+		aptos_framework::account::create_account_for_test(receiver_addr);
+		// create fungible asset with primary store enabled and mint to creator
+		let (creator_ref, _token_obj) = create_test_token(&token_staking);
+		let (mint_ref, _transfer_ref, _burn_ref) = init_test_metadata_with_primary_store_enabled(&creator_ref);
+		let metadata = mint_ref_metadata(&mint_ref);
+		pfs::mint(&mint_ref, sender_addr, 100);
+		//create collection  
+		create_collection(
+			&creator,
+			string::utf8(b"Movement Collection"),
+			string::utf8(b"Collection for Test"),
+			string::utf8(b"https://github.com/movementprotocol"),
+			2,
+			vector<bool>[false, false, false],
+		);
+		//token data
+		let default_keys = vector<String>[string::utf8(b"attack"), string::utf8(b"num_of_use")]; 
+		let default_vals = vector<vector<u8>>[bcs::to_bytes<u64>(&10), bcs::to_bytes<u64>(&5)];
+		let default_types = vector<String>[string::utf8(b"u64"), string::utf8(b"u64")];
+		let mutate_setting = vector<bool>[false, false, false, false, false];
+		//create token
+		create_token_script(
+			&creator,
+			string::utf8(b"Movement Collection"),
+			string::utf8(b"Movement Token #1"),
+			string::utf8(b"Collection for Test"),
+			2,
+			5,
+			string::utf8(b"https://aptos.dev"),
+			signer::address_of(&creator),
+			100,
+			0,
+			mutate_setting,
+			default_keys,
+			default_vals,
+			default_types,
+		);
+		let token_id=create_token_id_raw(signer::address_of(&creator), string::utf8(b"Movement Collection"), 
+		string::utf8(b"Movement Token #1"), 0);
+		let token = withdraw_token(&creator, token_id, 1);
+		deposit_token(&receiver, token);
+		create_staking(
+			   &creator,
+			   20,
+			   string::utf8(b"Movement Collection"),
+			   90,
+			   metadata);
+		stake_token(
+			&receiver,
+			sender_addr,
+			string::utf8(b"Movement Collection"),
+			string::utf8(b"Movement Token #1"),
+			0,
+			1);
+		let seed = string::utf8(b"Movement Collection");
+		let seed2 = string::utf8(b"Movement Token #1");
+		append(&mut seed, seed2);
+		let reward_treasury_address = get_resource_address(receiver_addr, seed);
+		assert!(balance_of(reward_treasury_address, token_id)==1, 99);
+		assert!(balance_of(receiver_addr, token_id)==0, 89);
+		claim_reward(
+			&receiver,
+			string::utf8(b"Movement Collection"),
+			string::utf8(b"Movement Token #1"),
+			sender_addr,
+		);
+		unstake_token( 
+			&receiver,
+			sender_addr,
+			string::utf8(b"Movement Collection"),
+			string::utf8(b"Movement Token #1"),
+			0);
+		assert!(balance_of(receiver_addr, token_id)==1, 79);
+		assert!(balance_of(reward_treasury_address, token_id)==0, 69);
+		let reward_data = borrow_global<MovementReward>(reward_treasury_address);
+		assert!(reward_data.start_time==0, 59);
+		assert!(reward_data.tokens==0, 59);
+		assert!(reward_data.withdraw_amount==0, 59);
 
-        //testing restake of token
-        stake_token(
-            &receiver,
-            sender_addr,
-            string::utf8(b"Movement Collection"),
-            string::utf8(b"Movement Token #1"),
-            0,
-            1);
-        assert!(balance_of(reward_treasury_address, token_id)==1, 49);
-        assert!(balance_of(receiver_addr, token_id)==0, 49);
-    } 
+		//testing restake of token
+		stake_token(
+			&receiver,
+			sender_addr,
+			string::utf8(b"Movement Collection"),
+			string::utf8(b"Movement Token #1"),
+			0,
+			1);
+		assert!(balance_of(reward_treasury_address, token_id)==1, 49);
+		assert!(balance_of(receiver_addr, token_id)==0, 49);
+	} 
 }
 
 

@@ -7,6 +7,9 @@ movement_staking = "_"
 Std = "0x1"
 aptos_std = "0x1"
 
+[dev-addresses]
+movement_staking = "0xfee"
+
 [dependencies]
 AptosFramework = { git = "https://github.com/movementlabsxyz/aptos-core.git", rev = "movement", subdir = "aptos-move/framework/aptos-framework"}
 AptosToken = {git = "https://github.com/movementlabsxyz/aptos-core.git", rev = "movement", subdir = "aptos-move/framework/aptos-token"}
