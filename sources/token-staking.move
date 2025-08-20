@@ -4,7 +4,7 @@ module movement_staking::tokenstaking
 {
     use std::signer;
     use std::string::{String, append};
-    use std::debug;
+
     use aptos_framework::account;
     use aptos_framework::fungible_asset;
     use aptos_framework::primary_fungible_store;
@@ -30,6 +30,8 @@ module movement_staking::tokenstaking
         metadata: Object<fungible_asset::Metadata>, 
         //treasury_cap
         treasury_cap: account::SignerCapability,
+        // if true, freeze rewards on claim (pre-TGE soulbound)
+        is_locked: bool,
     }
 
     // Reward vault for staking
@@ -78,6 +80,8 @@ module movement_staking::tokenstaking
         collection_name: String, //the name of the collection owned by Creator 
         total_amount: u64,
         metadata: Object<fungible_asset::Metadata>,
+        // Whether or not to lock the reward tokens earned in the user's account 
+        is_locked: bool,
     ) acquires ResourceInfo {
         let creator_addr = signer::address_of(creator);
         //verify the creator has the collection (DA standard)
@@ -98,6 +102,7 @@ module movement_staking::tokenstaking
         amount: total_amount,
         metadata: metadata, 
         treasury_cap: staking_treasury_cap,
+        is_locked: is_locked,
         });
     }
 
@@ -240,8 +245,10 @@ module movement_staking::tokenstaking
         };
         primary_fungible_store::transfer(&staking_treasury_signer_from_cap, staking_data.metadata, staker_addr, release_amount);
         
-        // Freeze the user's account for the claimed rewards (making them soulbound)
-        freeze_user_account(staker, staking_data.metadata);
+        // Conditionally freeze the user's account for the claimed rewards (making them soulbound)
+        if (staking_data.is_locked) {
+            freeze_user_account(staker, staking_data.metadata);
+        };
         
         staking_data.amount=staking_data.amount-release_amount;
         reward_data.withdraw_amount=reward_data.withdraw_amount+release_amount;
@@ -259,7 +266,6 @@ module movement_staking::tokenstaking
         let staking_address = get_resource_address(creator, collection_name);
         assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
-        let staking_treasury_signer_from_cap = account::create_signer_with_capability(&staking_data.treasury_cap);
         assert!(staking_data.state, ENO_STOPPED);
         //getting the seeds
         let seed = collection_name;
@@ -271,10 +277,6 @@ module movement_staking::tokenstaking
         let reward_data = borrow_global_mut<MovementReward>(reward_treasury_address);
         let reward_treasury_signer_from_cap = account::create_signer_with_capability(&reward_data.treasury_cap);
         assert!(reward_data.staker==staker_addr, ENO_STAKER_MISMATCH);
-        let dpr = staking_data.dpr;
-        let now = aptos_framework::timestamp::now_seconds();
-        let reward = ((now-reward_data.start_time)*dpr*reward_data.tokens)/86400;
-        let release_amount = reward - reward_data.withdraw_amount;
         // verify the reward treasury actually owns the token
         let token_obj = object::address_to_object<Token>(reward_data.token_address);
         assert!(object::owner(token_obj) == reward_treasury_address, ENO_INSUFFICIENT_TOKENS);
@@ -390,7 +392,8 @@ module movement_staking::tokenstaking
 			   20,
 			   string::utf8(b"Movement Collection"),
 			   90,
-			   metadata);
+			   metadata,
+			   true);
 		update_dpr(
 				&creator,
 				30,
@@ -415,7 +418,7 @@ module movement_staking::tokenstaking
 	} 
 
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
-    fun test_staking_happy_path(
+    fun test_staking_happy_path_with_freezing(
         creator: signer,
         receiver: signer,
         token_staking: signer,
@@ -452,7 +455,7 @@ module movement_staking::tokenstaking
         object::transfer(&creator, object::address_to_object<Token>(token_addr), receiver_addr);
         
         // Create staking pool with dpr=20
-        create_staking(&creator, 20, string::utf8(b"Movement Collection"), 90, metadata);
+        create_staking(&creator, 20, string::utf8(b"Movement Collection"), 90, metadata, true);
         
         // Stake the token
         stake_token(&receiver, object::address_to_object<Token>(token_addr));
@@ -481,6 +484,90 @@ module movement_staking::tokenstaking
         
         // Unstake the token
         unstake_token(&receiver, sender_addr, string::utf8(b"Movement Collection"), string::utf8(b"Movement Token #1"));
+        
+        // Verify token is returned to receiver
+        assert!(object::owner(object::address_to_object<Token>(token_addr)) == receiver_addr, 5);
+        assert!(object::owner(object::address_to_object<Token>(token_addr)) != reward_treasury_address, 6);
+        
+        // Verify reward data is reset
+        let reward_data = borrow_global<MovementReward>(reward_treasury_address);
+        assert!(reward_data.start_time == 0, 7);
+        assert!(reward_data.tokens == 0, 8);
+        assert!(reward_data.withdraw_amount == 0, 9);
+        
+        // Test restaking the same token
+        stake_token(&receiver, object::address_to_object<Token>(token_addr));
+        assert!(object::owner(object::address_to_object<Token>(token_addr)) == reward_treasury_address, 10);
+        assert!(object::owner(object::address_to_object<Token>(token_addr)) != receiver_addr, 11);
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
+    fun test_staking_happy_path_without_freezing(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+        framework: signer,
+    ) acquires ResourceInfo, MovementStaking, MovementReward {
+        let sender_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        timestamp::set_time_has_started_for_testing(&framework);
+        aptos_framework::account::create_account_for_test(sender_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Initialize banana_a FA module
+        banana_a::test_init(&token_staking);
+        let metadata = banana_a::get_metadata();
+        banana_a::mint(&token_staking, sender_addr, 100);
+        
+        // DA collection + token
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Freezing Disabled Collection"),
+            string::utf8(b"Freezing Disabled Collection"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Freezing Disabled Collection"),
+            string::utf8(b"desc"),
+            string::utf8(b"Freezing Disabled Token"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token_addr = object::address_from_constructor_ref(&token_ref);
+        object::transfer(&creator, object::address_to_object<Token>(token_addr), receiver_addr);
+        
+        // Create staking pool with dpr=20 and freezing DISABLED (is_locked = false)
+        create_staking(&creator, 20, string::utf8(b"Freezing Disabled Collection"), 90, metadata, false);
+        
+        // Stake the token
+        stake_token(&receiver, object::address_to_object<Token>(token_addr));
+        
+        // Verify token is owned by reward treasury
+        let seed = string::utf8(b"Freezing Disabled Collection");
+        let seed2 = string::utf8(b"Freezing Disabled Token");
+        append(&mut seed, seed2);
+        let reward_treasury_address = get_resource_address(receiver_addr, seed);
+        assert!(object::owner(object::address_to_object<Token>(token_addr)) == reward_treasury_address, 1);
+        assert!(object::owner(object::address_to_object<Token>(token_addr)) != receiver_addr, 2);
+        
+        // Advance time by 1 day to accrue rewards
+        timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
+        
+        // Check balance before claiming
+        let balance_before = primary_fungible_store::balance(receiver_addr, metadata);
+        
+        // Claim rewards
+        claim_reward(&receiver, string::utf8(b"Freezing Disabled Collection"), string::utf8(b"Freezing Disabled Token"), sender_addr);
+        
+        // Verify rewards were received but account is NOT frozen (no soulbound)
+        let balance_after = primary_fungible_store::balance(receiver_addr, metadata);
+        assert!(balance_after > balance_before, 3);
+        assert!(!primary_fungible_store::is_frozen(receiver_addr, metadata), 4);
+        
+        // Unstake the token
+        unstake_token(&receiver, sender_addr, string::utf8(b"Freezing Disabled Collection"), string::utf8(b"Freezing Disabled Token"));
         
         // Verify token is returned to receiver
         assert!(object::owner(object::address_to_object<Token>(token_addr)) == receiver_addr, 5);
@@ -532,7 +619,7 @@ module movement_staking::tokenstaking
         let token_addr = object::address_from_constructor_ref(&token_ref);
         object::transfer(&creator, object::address_to_object<Token>(token_addr), receiver_addr);
         // Pool then stop
-        create_staking(&creator, 10, string::utf8(b"Test Collection"), 90, metadata);
+        create_staking(&creator, 10, string::utf8(b"Test Collection"), 90, metadata, true);
         creator_stop_staking(&creator, string::utf8(b"Test Collection"));
         // Attempt stake (should abort with ENO_STOPPED=4)
         stake_token(&receiver, object::address_to_object<Token>(token_addr));
@@ -571,7 +658,7 @@ module movement_staking::tokenstaking
         assert!(!is_staking_enabled(sender_addr, string::utf8(b"Test Collection")), 2);
         
         // Create staking pool
-        create_staking(&creator, 20, string::utf8(b"Test Collection"), 90, metadata);
+        create_staking(&creator, 20, string::utf8(b"Test Collection"), 90, metadata, true);
         
         // Test 3: Staking pool exists and is enabled by default
         assert!(is_staking_enabled(sender_addr, string::utf8(b"Test Collection")), 3);
@@ -590,7 +677,7 @@ module movement_staking::tokenstaking
     }
 
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
-    fun test_multiple_fa_staking(
+    fun test_multiple_fa_staking_with_freezing(
         creator: signer,
         receiver: signer,
         token_staking: signer,
@@ -660,34 +747,15 @@ module movement_staking::tokenstaking
         object::transfer(&creator, object::address_to_object<Token>(token_b_addr), receiver_addr);
         
         // Create staking pools for both FAs (different collections to avoid resource account conflicts)
-        create_staking(&creator, 20, string::utf8(b"Test Collection A"), 500, banana_a_metadata);
-        create_staking(&creator, 15, string::utf8(b"Test Collection B"), 300, banana_b_metadata);
+        create_staking(&creator, 20, string::utf8(b"Test Collection A"), 500, banana_a_metadata, true);
+        create_staking(&creator, 15, string::utf8(b"Test Collection B"), 300, banana_b_metadata, true);
         
         // Stake both tokens
         stake_token(&receiver, object::address_to_object<Token>(token_a_addr));
         stake_token(&receiver, object::address_to_object<Token>(token_b_addr));
         
-        // Check balances before time advancement
-        let banana_a_balance_before = primary_fungible_store::balance(receiver_addr, banana_a_metadata);
-        let banana_b_balance_before = primary_fungible_store::balance(receiver_addr, banana_b_metadata);
-        debug::print(&string::utf8(b"Before time advancement:"));
-        debug::print(&string::utf8(b"Banana A balance: "));
-        debug::print(&banana_a_balance_before);
-        debug::print(&string::utf8(b"Banana B balance: "));
-        debug::print(&banana_b_balance_before);
-        
-        // Wait some time and claim rewards
         // Advance time by 1 day (86400 seconds) to accrue rewards
         timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
-        
-        // Check balances after time advancement but before claiming
-        let banana_a_balance_after_time = primary_fungible_store::balance(receiver_addr, banana_a_metadata);
-        let banana_b_balance_after_time = primary_fungible_store::balance(receiver_addr, banana_b_metadata);
-        debug::print(&string::utf8(b"After time advancement (before claiming):"));
-        debug::print(&string::utf8(b"Banana A balance: "));
-        debug::print(&banana_a_balance_after_time);
-        debug::print(&string::utf8(b"Banana B balance: "));
-        debug::print(&banana_b_balance_after_time);
         
         // Claim rewards for both tokens
         claim_reward(&receiver, string::utf8(b"Test Collection A"), string::utf8(b"Token A"), sender_addr);
@@ -700,17 +768,116 @@ module movement_staking::tokenstaking
         // Verify balances increased after time advancement and reward claiming
         let banana_a_balance = primary_fungible_store::balance(receiver_addr, banana_a_metadata);
         let banana_b_balance = primary_fungible_store::balance(receiver_addr, banana_b_metadata);
-        debug::print(&string::utf8(b"After claiming rewards:"));
-        debug::print(&string::utf8(b"Banana A balance: "));
-        debug::print(&banana_a_balance);
-        debug::print(&string::utf8(b"Banana B balance: "));
-        debug::print(&banana_b_balance);
         assert!(banana_a_balance > 0, 3);
         assert!(banana_b_balance > 0, 4);
         
         // Unstake both tokens (should work even with frozen accounts thanks to transfer_with_ref)
         unstake_token(&receiver, sender_addr, string::utf8(b"Test Collection A"), string::utf8(b"Token A"));
         unstake_token(&receiver, sender_addr, string::utf8(b"Test Collection B"), string::utf8(b"Token B"));
+        
+        // Verify tokens are returned
+        assert!(object::owner(object::address_to_object<Token>(token_a_addr)) == receiver_addr, 5);
+        assert!(object::owner(object::address_to_object<Token>(token_b_addr)) == receiver_addr, 6);
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
+    fun test_multiple_fa_staking_without_freezing(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+        framework: signer,
+    ) acquires ResourceInfo, MovementStaking, MovementReward {
+        let sender_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        
+        // Set up global time for testing
+        timestamp::set_time_has_started_for_testing(&framework);
+        
+        // Create accounts
+        aptos_framework::account::create_account_for_test(sender_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Initialize both FA modules
+        banana_a::test_init(&token_staking);
+        banana_b::test_init(&token_staking);
+        
+        // Get metadata for both FAs
+        let banana_a_metadata = banana_a::get_metadata();
+        let banana_b_metadata = banana_b::get_metadata();
+        
+        // Mint some tokens to creator for both FAs
+        banana_a::mint(&token_staking, sender_addr, 1000);
+        banana_b::mint(&token_staking, sender_addr, 1000);
+        
+        // Create DA collections for both FAs
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Test Collection C"),
+            string::utf8(b"Test Collection C"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Test Collection D"),
+            string::utf8(b"Test Collection D"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Create two different tokens
+        let token_a_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Test Collection C"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token C"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token_b_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Test Collection D"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token D"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        let token_a_addr = object::address_from_constructor_ref(&token_a_ref);
+        let token_b_addr = object::address_from_constructor_ref(&token_b_ref);
+        
+        // Transfer tokens to receiver
+        object::transfer(&creator, object::address_to_object<Token>(token_a_addr), receiver_addr);
+        object::transfer(&creator, object::address_to_object<Token>(token_b_addr), receiver_addr);
+        
+        // Create staking pools for both FAs with freezing DISABLED (is_locked = false)
+        create_staking(&creator, 20, string::utf8(b"Test Collection C"), 500, banana_a_metadata, false);
+        create_staking(&creator, 15, string::utf8(b"Test Collection D"), 300, banana_b_metadata, false);
+        
+        // Stake both tokens
+        stake_token(&receiver, object::address_to_object<Token>(token_a_addr));
+        stake_token(&receiver, object::address_to_object<Token>(token_b_addr));
+        
+        // Advance time by 1 day (86400 seconds) to accrue rewards
+        timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
+        
+        // Claim rewards for both tokens
+        claim_reward(&receiver, string::utf8(b"Test Collection C"), string::utf8(b"Token C"), sender_addr);
+        claim_reward(&receiver, string::utf8(b"Test Collection D"), string::utf8(b"Token D"), sender_addr);
+        
+        // Verify that both accounts are NOT frozen after claiming rewards (no soulbound)
+        assert!(!primary_fungible_store::is_frozen(receiver_addr, banana_a_metadata), 1);
+        assert!(!primary_fungible_store::is_frozen(receiver_addr, banana_b_metadata), 2);
+        
+        // Verify balances increased after time advancement and reward claiming
+        let banana_a_balance = primary_fungible_store::balance(receiver_addr, banana_a_metadata);
+        let banana_b_balance = primary_fungible_store::balance(receiver_addr, banana_b_metadata);
+        assert!(banana_a_balance > 0, 3);
+        assert!(banana_b_balance > 0, 4);
+        
+        // Unstake both tokens (should work normally since accounts are not frozen)
+        unstake_token(&receiver, sender_addr, string::utf8(b"Test Collection C"), string::utf8(b"Token C"));
+        unstake_token(&receiver, sender_addr, string::utf8(b"Test Collection D"), string::utf8(b"Token D"));
         
         // Verify tokens are returned
         assert!(object::owner(object::address_to_object<Token>(token_a_addr)) == receiver_addr, 5);
