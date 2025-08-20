@@ -66,8 +66,9 @@ module movement_staking::tokenstaking
     const ENO_INSUFFICIENT_TOKENS: u64=7;
 
 
-    //Functions    
-    //Function for creating and modifying staking
+    // -------- Functions -------- 
+    
+    /// Creates a new staking pool for a collection with specified daily percentage return
     public entry fun create_staking(
         creator: &signer,
         dpr: u64,//rate of payment,
@@ -96,6 +97,8 @@ module movement_staking::tokenstaking
         treasury_cap: staking_treasury_cap,
         });
     }
+
+    /// Updates the daily percentage return rate for an existing staking pool
     public entry fun update_dpr(
         creator: &signer,
         dpr: u64, //rate of payment,
@@ -108,6 +111,8 @@ module movement_staking::tokenstaking
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         staking_data.dpr=dpr;
     }
+
+    /// Stops staking for a collection, preventing new stakes and claims
     public entry fun creator_stop_staking(
         creator: &signer,
         collection_name: String, //the name of the collection owned by Creator 
@@ -119,6 +124,8 @@ module movement_staking::tokenstaking
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         staking_data.state=false;
     }
+
+    /// Deposits additional reward tokens into the staking pool and re-enables staking
     public entry fun deposit_staking_rewards(
         creator: &signer,
         collection_name: String, //the name of the collection owned by Creator 
@@ -136,7 +143,10 @@ module movement_staking::tokenstaking
         staking_data.state=true;
         
     }
-    // Functions for staking and earning rewards
+
+    // -------- Functions for staking and earning rewards -------- 
+
+    /// Stakes an NFT token to start earning rewards based on the collection's daily percentage return
     public entry fun stake_token(
         staker: &signer,
         nft: Object<Token>,
@@ -195,6 +205,7 @@ module movement_staking::tokenstaking
         };
     }
 
+    /// Claims accumulated staking rewards for a specific staked token
     public entry fun claim_reward(
         staker: &signer, 
         collection_name: String, //the name of the collection owned by Creator 
@@ -229,7 +240,7 @@ module movement_staking::tokenstaking
         reward_data.withdraw_amount=reward_data.withdraw_amount+release_amount;
     }
 
-    // Function to unstake a token
+    /// Unstakes an NFT token, claims final rewards, and returns the token to the staker
     public entry fun unstake_token (   
         staker: &signer, 
         creator: address,
@@ -301,6 +312,20 @@ module movement_staking::tokenstaking
             let maps = borrow_global_mut<ResourceInfo>(add1);
             simple_map::contains_key(&maps.resource_map, &string)
         }
+    }
+
+    #[view]
+    /// View function to check if staking is enabled for a collection
+    public fun is_staking_enabled(creator_addr: address, collection_name: String): bool acquires ResourceInfo, MovementStaking {
+        if (!exists<ResourceInfo>(creator_addr)) {
+            return false
+        };
+        let staking_address = get_resource_address(creator_addr, collection_name);
+        if (!exists<MovementStaking>(staking_address)) {
+            return false
+        };
+        let staking_data = borrow_global<MovementStaking>(staking_address);
+        staking_data.state
     }
 
     #[test_only] 
@@ -522,14 +547,14 @@ module movement_staking::tokenstaking
         // DA setup
         collection::create_unlimited_collection(
             &creator,
-            string::utf8(b"Collection for Test"),
-            string::utf8(b"Movement Collection"),
+            string::utf8(b"Test Collection"),
+            string::utf8(b"Test Collection"),
             option::none(),
             string::utf8(b"uri"),
         );
         let token_ref = token::create_named_token(
             &creator,
-            string::utf8(b"Movement Collection"),
+            string::utf8(b"Test Collection"),
             string::utf8(b"desc"),
             string::utf8(b"Movement Token #S"),
             option::none(),
@@ -538,9 +563,60 @@ module movement_staking::tokenstaking
         let token_addr = object::address_from_constructor_ref(&token_ref);
         object::transfer(&creator, object::address_to_object<Token>(token_addr), receiver_addr);
         // Pool then stop
-        create_staking(&creator, 10, string::utf8(b"Movement Collection"), 90, metadata);
-        creator_stop_staking(&creator, string::utf8(b"Movement Collection"));
+        create_staking(&creator, 10, string::utf8(b"Test Collection"), 90, metadata);
+        creator_stop_staking(&creator, string::utf8(b"Test Collection"));
         // Attempt stake (should abort with ENO_STOPPED=4)
         stake_token(&receiver, object::address_to_object<Token>(token_addr));
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
+    fun test_is_staking_enabled(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+    ) acquires ResourceInfo, MovementStaking {
+        let sender_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        aptos_framework::account::create_account_for_test(sender_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Test 1: No staking resources exist yet
+        assert!(!is_staking_enabled(sender_addr, string::utf8(b"NonExistent Collection")), 1);
+        
+        // FA setup
+        let (creator_ref, _obj) = create_test_token(&token_staking);
+        let (mint_ref, _tref, _bref) = init_test_metadata_with_primary_store_enabled(&creator_ref);
+        let metadata = mint_ref_metadata(&mint_ref);
+        pfs::mint(&mint_ref, sender_addr, 100);
+        
+        // DA setup
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Collection for Test"),
+            string::utf8(b"Test Collection"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Test 2: Collection exists but no staking pool yet
+        assert!(!is_staking_enabled(sender_addr, string::utf8(b"Test Collection")), 2);
+        
+        // Create staking pool
+        create_staking(&creator, 20, string::utf8(b"Test Collection"), 90, metadata);
+        
+        // Test 3: Staking pool exists and is enabled by default
+        assert!(is_staking_enabled(sender_addr, string::utf8(b"Test Collection")), 3);
+        
+        // Stop staking
+        creator_stop_staking(&creator, string::utf8(b"Test Collection"));
+        
+        // Test 4: Staking pool exists but is stopped
+        assert!(!is_staking_enabled(sender_addr, string::utf8(b"Test Collection")), 4);
+        
+        // Re-enable staking by depositing rewards
+        deposit_staking_rewards(&creator, string::utf8(b"Test Collection"), 10);
+        
+        // Test 5: Staking pool re-enabled after deposit
+        assert!(is_staking_enabled(sender_addr, string::utf8(b"Test Collection")), 5);
     }
 }
