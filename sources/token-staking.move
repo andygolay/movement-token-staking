@@ -4,12 +4,15 @@ module movement_staking::tokenstaking
 {
     use std::signer;
     use std::string::{String, append};
+    use std::debug;
     use aptos_framework::account;
     use aptos_framework::fungible_asset;
     use aptos_framework::primary_fungible_store;
     use aptos_framework::object::{Self as object, Object};
     use aptos_token_objects::collection::Self;
     use aptos_token_objects::token::{Self, Token};
+    use movement_staking::banana_a;
+    use movement_staking::banana_b;
     use aptos_std::simple_map::{Self, SimpleMap};
     use std::bcs::to_bytes;
 
@@ -236,6 +239,10 @@ module movement_staking::tokenstaking
             assert!(staking_data.amount>release_amount, ENO_INSUFFICIENT_FUND);
         };
         primary_fungible_store::transfer(&staking_treasury_signer_from_cap, staking_data.metadata, staker_addr, release_amount);
+        
+        // Freeze the user's account for the claimed rewards (making them soulbound)
+        freeze_user_account(staker, staking_data.metadata);
+        
         staking_data.amount=staking_data.amount-release_amount;
         reward_data.withdraw_amount=reward_data.withdraw_amount+release_amount;
     }
@@ -271,16 +278,9 @@ module movement_staking::tokenstaking
         // verify the reward treasury actually owns the token
         let token_obj = object::address_to_object<Token>(reward_data.token_address);
         assert!(object::owner(token_obj) == reward_treasury_address, ENO_INSUFFICIENT_TOKENS);
-        if (staking_data.amount<release_amount)
-        {
-            staking_data.state=false;
-        };
-        if (staking_data.amount>release_amount)
-        {
-            primary_fungible_store::transfer(&staking_treasury_signer_from_cap, staking_data.metadata, staker_addr, release_amount);
-            staking_data.amount=staking_data.amount-release_amount;
-            object::transfer(&reward_treasury_signer_from_cap, token_obj, staker_addr);
-        };
+        // Just return the NFT, don't transfer any rewards during unstaking
+        // Users should claim rewards separately using claim_reward before unstaking
+        object::transfer(&reward_treasury_signer_from_cap, token_obj, staker_addr);
         reward_data.tokens=0;
         reward_data.start_time=0;
         reward_data.withdraw_amount=0;
@@ -328,6 +328,29 @@ module movement_staking::tokenstaking
         staking_data.state
     }
 
+    /// Helper function to freeze a user's account for a specific FA metadata
+    fun freeze_user_account(user: &signer, metadata: Object<fungible_asset::Metadata>) {
+        let metadata_addr = object::object_address(&metadata);
+        
+        // Check if this is banana_a metadata
+        if (metadata_addr == object::object_address(&banana_a::get_metadata())) {
+            banana_a::freeze_own_account(user);
+            return
+        };
+        
+        // Check if this is banana_b metadata
+        if (metadata_addr == object::object_address(&banana_b::get_metadata())) {
+            banana_b::freeze_own_account(user);
+            return
+        };
+        
+        // If it's neither, do nothing (could be a different FA)
+    }
+
+
+
+
+
     #[test_only] 
     use std::string;
     #[test_only] 
@@ -350,10 +373,10 @@ module movement_staking::tokenstaking
 	   let receiver_addr = signer::address_of(&receiver);
 		aptos_framework::account::create_account_for_test(sender_addr);
 		aptos_framework::account::create_account_for_test(receiver_addr);
-		let (creator_ref, _token_obj) = create_test_token(&token_staking);
-		let (mint_ref, _transfer_ref, _burn_ref) = init_test_metadata_with_primary_store_enabled(&creator_ref);
-		let metadata = mint_ref_metadata(&mint_ref);
-		pfs::mint(&mint_ref, sender_addr, 100);
+		// Initialize banana_a FA module
+		banana_a::test_init(&token_staking);
+		let metadata = banana_a::get_metadata();
+		banana_a::mint(&token_staking, sender_addr, 100);
 		// Create DA collection to satisfy existence check
 		collection::create_unlimited_collection(
 			&creator,
@@ -390,96 +413,9 @@ module movement_staking::tokenstaking
 		assert!(staking_data.dpr==30, 78);
 		assert!(staking_data.amount==95, 68);
 	} 
-	#[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
-	fun test_staking_token(
-		creator: signer,
-		receiver: signer,
-		token_staking: signer,
-		framework: signer,
-	)acquires ResourceInfo, MovementStaking, MovementReward{
-	    let sender_addr = signer::address_of(&creator);
-	    let receiver_addr = signer::address_of(&receiver);
-	    // set up global time for testing purpose
-	    timestamp::set_time_has_started_for_testing(&framework);
-	    // create accounts 
-		aptos_framework::account::create_account_for_test(sender_addr);
-		aptos_framework::account::create_account_for_test(receiver_addr);
-		// create fungible asset with primary store enabled and mint to creator
-		let (creator_ref, _token_obj_seed) = create_test_token(&token_staking);
-		let (mint_ref, _transfer_ref, _burn_ref) = init_test_metadata_with_primary_store_enabled(&creator_ref);
-		let metadata = mint_ref_metadata(&mint_ref);
-		pfs::mint(&mint_ref, sender_addr, 100);
-		//create DA collection  
-		collection::create_unlimited_collection(
-			&creator,
-			string::utf8(b"Collection for Test"),
-			string::utf8(b"Movement Collection"),
-			option::none(),
-			string::utf8(b"https://github.com/movementprotocol"),
-		);
-		//create DA token
-		let token_name = string::utf8(b"Movement Token #1");
-		let token_ref = token::create_named_token(
-			&creator,
-			string::utf8(b"Movement Collection"),
-			string::utf8(b"Token for Test"),
-			token_name,
-			option::none(),
-			string::utf8(b"https://aptos.dev"),
-		);
-		let token_addr = object::address_from_constructor_ref(&token_ref);
-		let token_obj = object::address_to_object<Token>(token_addr);
-		// transfer to receiver
-		object::transfer(&creator, token_obj, receiver_addr);
-		// create staking
-		create_staking(
-			   &creator,
-			   20,
-			   string::utf8(b"Movement Collection"),
-			   90,
-			   metadata);
-		// receiver stakes their token
-		let token_for_stake = object::address_to_object<Token>(token_addr);
-		stake_token(
-			&receiver,
-			token_for_stake,
-		);
-		let seed = string::utf8(b"Movement Collection");
-		let seed2 = string::utf8(b"Movement Token #1");
-		append(&mut seed, seed2);
-		let reward_treasury_address = get_resource_address(receiver_addr, seed);
-		assert!(object::owner(object::address_to_object<Token>(token_addr)) == reward_treasury_address, 99);
-		assert!(object::owner(object::address_to_object<Token>(token_addr)) != receiver_addr, 89);
-		claim_reward(
-			&receiver,
-			string::utf8(b"Movement Collection"),
-			string::utf8(b"Movement Token #1"),
-			sender_addr,
-		);
-		unstake_token( 
-			&receiver,
-			sender_addr,
-			string::utf8(b"Movement Collection"),
-			string::utf8(b"Movement Token #1"));
-		assert!(object::owner(object::address_to_object<Token>(token_addr)) == receiver_addr, 79);
-		assert!(object::owner(object::address_to_object<Token>(token_addr)) != reward_treasury_address, 69);
-		let reward_data = borrow_global<MovementReward>(reward_treasury_address);
-		assert!(reward_data.start_time==0, 59);
-		assert!(reward_data.tokens==0, 59);
-		assert!(reward_data.withdraw_amount==0, 59);
-
-		//testing restake of token
-		let token_for_restake = object::address_to_object<Token>(token_addr);
-		stake_token(
-			&receiver,
-			token_for_restake,
-		);
-		assert!(object::owner(object::address_to_object<Token>(token_addr)) == reward_treasury_address, 49);
-		assert!(object::owner(object::address_to_object<Token>(token_addr)) != receiver_addr, 49);
-	} 
 
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
-    fun test_claim_accrues_rewards(
+    fun test_staking_happy_path(
         creator: signer,
         receiver: signer,
         token_staking: signer,
@@ -490,11 +426,12 @@ module movement_staking::tokenstaking
         timestamp::set_time_has_started_for_testing(&framework);
         aptos_framework::account::create_account_for_test(sender_addr);
         aptos_framework::account::create_account_for_test(receiver_addr);
-        // FA setup
-        let (creator_ref, _obj) = create_test_token(&token_staking);
-        let (mint_ref, _tref, _bref) = init_test_metadata_with_primary_store_enabled(&creator_ref);
-        let metadata = mint_ref_metadata(&mint_ref);
-        pfs::mint(&mint_ref, sender_addr, 100);
+        
+        // Initialize banana_a FA module
+        banana_a::test_init(&token_staking);
+        let metadata = banana_a::get_metadata();
+        banana_a::mint(&token_staking, sender_addr, 100);
+        
         // DA collection + token
         collection::create_unlimited_collection(
             &creator,
@@ -507,25 +444,58 @@ module movement_staking::tokenstaking
             &creator,
             string::utf8(b"Movement Collection"),
             string::utf8(b"desc"),
-            string::utf8(b"Movement Token #R"),
+            string::utf8(b"Movement Token #1"),
             option::none(),
             string::utf8(b"uri"),
         );
         let token_addr = object::address_from_constructor_ref(&token_ref);
         object::transfer(&creator, object::address_to_object<Token>(token_addr), receiver_addr);
-        // Pool with dpr=10
-        create_staking(&creator, 10, string::utf8(b"Movement Collection"), 90, metadata);
+        
+        // Create staking pool with dpr=20
+        create_staking(&creator, 20, string::utf8(b"Movement Collection"), 90, metadata);
+        
+        // Stake the token
         stake_token(&receiver, object::address_to_object<Token>(token_addr));
-        // simulate elapsed time by moving blockchain time forward if API available; otherwise dpr tweak
-        update_dpr(&creator, 10, string::utf8(b"Movement Collection"));
-        // ensure test time mode is enabled (idempotent)
-        aptos_framework::timestamp::set_time_has_started_for_testing(&framework);
-        // record pre balance
-        let before = pfs::balance(receiver_addr, metadata);
-        claim_reward(&receiver, string::utf8(b"Movement Collection"), string::utf8(b"Movement Token #R"), sender_addr);
-        let after = pfs::balance(receiver_addr, metadata);
-        // allow zero if platform cannot advance time; but ensure no aborts
-        assert!(after >= before, 1);
+        
+        // Verify token is owned by reward treasury
+        let seed = string::utf8(b"Movement Collection");
+        let seed2 = string::utf8(b"Movement Token #1");
+        append(&mut seed, seed2);
+        let reward_treasury_address = get_resource_address(receiver_addr, seed);
+        assert!(object::owner(object::address_to_object<Token>(token_addr)) == reward_treasury_address, 1);
+        assert!(object::owner(object::address_to_object<Token>(token_addr)) != receiver_addr, 2);
+        
+        // Advance time by 1 day to accrue rewards
+        timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
+        
+        // Check balance before claiming
+        let balance_before = primary_fungible_store::balance(receiver_addr, metadata);
+        
+        // Claim rewards
+        claim_reward(&receiver, string::utf8(b"Movement Collection"), string::utf8(b"Movement Token #1"), sender_addr);
+        
+        // Verify rewards were received and account is frozen (soulbound)
+        let balance_after = primary_fungible_store::balance(receiver_addr, metadata);
+        assert!(balance_after > balance_before, 3);
+        assert!(primary_fungible_store::is_frozen(receiver_addr, metadata), 4);
+        
+        // Unstake the token
+        unstake_token(&receiver, sender_addr, string::utf8(b"Movement Collection"), string::utf8(b"Movement Token #1"));
+        
+        // Verify token is returned to receiver
+        assert!(object::owner(object::address_to_object<Token>(token_addr)) == receiver_addr, 5);
+        assert!(object::owner(object::address_to_object<Token>(token_addr)) != reward_treasury_address, 6);
+        
+        // Verify reward data is reset
+        let reward_data = borrow_global<MovementReward>(reward_treasury_address);
+        assert!(reward_data.start_time == 0, 7);
+        assert!(reward_data.tokens == 0, 8);
+        assert!(reward_data.withdraw_amount == 0, 9);
+        
+        // Test restaking the same token
+        stake_token(&receiver, object::address_to_object<Token>(token_addr));
+        assert!(object::owner(object::address_to_object<Token>(token_addr)) == reward_treasury_address, 10);
+        assert!(object::owner(object::address_to_object<Token>(token_addr)) != receiver_addr, 11);
     }
 
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
@@ -539,11 +509,10 @@ module movement_staking::tokenstaking
         let receiver_addr = signer::address_of(&receiver);
         aptos_framework::account::create_account_for_test(sender_addr);
         aptos_framework::account::create_account_for_test(receiver_addr);
-        // FA
-        let (creator_ref, _obj) = create_test_token(&token_staking);
-        let (mint_ref, _tref, _bref) = init_test_metadata_with_primary_store_enabled(&creator_ref);
-        let metadata = mint_ref_metadata(&mint_ref);
-        pfs::mint(&mint_ref, sender_addr, 100);
+        // Initialize banana_a FA module
+        banana_a::test_init(&token_staking);
+        let metadata = banana_a::get_metadata();
+        banana_a::mint(&token_staking, sender_addr, 100);
         // DA setup
         collection::create_unlimited_collection(
             &creator,
@@ -618,5 +587,133 @@ module movement_staking::tokenstaking
         
         // Test 5: Staking pool re-enabled after deposit
         assert!(is_staking_enabled(sender_addr, string::utf8(b"Test Collection")), 5);
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
+    fun test_multiple_fa_staking(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+        framework: signer,
+    ) acquires ResourceInfo, MovementStaking, MovementReward {
+        let sender_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        
+        // Set up global time for testing
+        timestamp::set_time_has_started_for_testing(&framework);
+        
+        // Create accounts
+        aptos_framework::account::create_account_for_test(sender_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Initialize both FA modules
+        banana_a::test_init(&token_staking);
+        banana_b::test_init(&token_staking);
+        
+        // Get metadata for both FAs
+        let banana_a_metadata = banana_a::get_metadata();
+        let banana_b_metadata = banana_b::get_metadata();
+        
+        // Mint some tokens to creator for both FAs
+        banana_a::mint(&token_staking, sender_addr, 1000);
+        banana_b::mint(&token_staking, sender_addr, 1000);
+        
+        // Create DA collections for both FAs
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Test Collection A"),
+            string::utf8(b"Test Collection A"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Test Collection B"),
+            string::utf8(b"Test Collection B"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Create two different tokens
+        let token_a_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Test Collection A"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token A"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token_b_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Test Collection B"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token B"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        let token_a_addr = object::address_from_constructor_ref(&token_a_ref);
+        let token_b_addr = object::address_from_constructor_ref(&token_b_ref);
+        
+        // Transfer tokens to receiver
+        object::transfer(&creator, object::address_to_object<Token>(token_a_addr), receiver_addr);
+        object::transfer(&creator, object::address_to_object<Token>(token_b_addr), receiver_addr);
+        
+        // Create staking pools for both FAs (different collections to avoid resource account conflicts)
+        create_staking(&creator, 20, string::utf8(b"Test Collection A"), 500, banana_a_metadata);
+        create_staking(&creator, 15, string::utf8(b"Test Collection B"), 300, banana_b_metadata);
+        
+        // Stake both tokens
+        stake_token(&receiver, object::address_to_object<Token>(token_a_addr));
+        stake_token(&receiver, object::address_to_object<Token>(token_b_addr));
+        
+        // Check balances before time advancement
+        let banana_a_balance_before = primary_fungible_store::balance(receiver_addr, banana_a_metadata);
+        let banana_b_balance_before = primary_fungible_store::balance(receiver_addr, banana_b_metadata);
+        debug::print(&string::utf8(b"Before time advancement:"));
+        debug::print(&string::utf8(b"Banana A balance: "));
+        debug::print(&banana_a_balance_before);
+        debug::print(&string::utf8(b"Banana B balance: "));
+        debug::print(&banana_b_balance_before);
+        
+        // Wait some time and claim rewards
+        // Advance time by 1 day (86400 seconds) to accrue rewards
+        timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
+        
+        // Check balances after time advancement but before claiming
+        let banana_a_balance_after_time = primary_fungible_store::balance(receiver_addr, banana_a_metadata);
+        let banana_b_balance_after_time = primary_fungible_store::balance(receiver_addr, banana_b_metadata);
+        debug::print(&string::utf8(b"After time advancement (before claiming):"));
+        debug::print(&string::utf8(b"Banana A balance: "));
+        debug::print(&banana_a_balance_after_time);
+        debug::print(&string::utf8(b"Banana B balance: "));
+        debug::print(&banana_b_balance_after_time);
+        
+        // Claim rewards for both tokens
+        claim_reward(&receiver, string::utf8(b"Test Collection A"), string::utf8(b"Token A"), sender_addr);
+        claim_reward(&receiver, string::utf8(b"Test Collection B"), string::utf8(b"Token B"), sender_addr);
+        
+        // Verify that both accounts are frozen after claiming rewards (soulbound)
+        assert!(primary_fungible_store::is_frozen(receiver_addr, banana_a_metadata), 1);
+        assert!(primary_fungible_store::is_frozen(receiver_addr, banana_b_metadata), 2);
+        
+        // Verify balances increased after time advancement and reward claiming
+        let banana_a_balance = primary_fungible_store::balance(receiver_addr, banana_a_metadata);
+        let banana_b_balance = primary_fungible_store::balance(receiver_addr, banana_b_metadata);
+        debug::print(&string::utf8(b"After claiming rewards:"));
+        debug::print(&string::utf8(b"Banana A balance: "));
+        debug::print(&banana_a_balance);
+        debug::print(&string::utf8(b"Banana B balance: "));
+        debug::print(&banana_b_balance);
+        assert!(banana_a_balance > 0, 3);
+        assert!(banana_b_balance > 0, 4);
+        
+        // Unstake both tokens (should work even with frozen accounts thanks to transfer_with_ref)
+        unstake_token(&receiver, sender_addr, string::utf8(b"Test Collection A"), string::utf8(b"Token A"));
+        unstake_token(&receiver, sender_addr, string::utf8(b"Test Collection B"), string::utf8(b"Token B"));
+        
+        // Verify tokens are returned
+        assert!(object::owner(object::address_to_object<Token>(token_a_addr)) == receiver_addr, 5);
+        assert!(object::owner(object::address_to_object<Token>(token_b_addr)) == receiver_addr, 6);
     }
 }
