@@ -3,7 +3,7 @@
 
 // TODO: 
 // - Add registry of staked NFTs per user (COMPLETED)
-// - Add list of allowed collection IDs 
+// - Add list of allowed collection IDs (COMPLETED)
 // - Add view function to see user's staked NFTs (COMPLETED)
 // - Add view function to see user's accumulated rewards
 // - Add batch stake function (COMPLETED)
@@ -238,6 +238,26 @@ module movement_staking::tokenstaking
     public fun is_collection_allowed(collection_name: String): bool acquires AllowedCollectionsRegistry {
         let allowed_collections = borrow_global<AllowedCollectionsRegistry>(@movement_staking);
         smart_table::contains(&allowed_collections.allowed_collections, collection_name)
+    }
+
+    #[view]
+    /// Returns all allowed collections for staking
+    public fun get_allowed_collections(): vector<String> acquires AllowedCollectionsRegistry {
+        let allowed_collections = borrow_global<AllowedCollectionsRegistry>(@movement_staking);
+        let result = vector::empty<String>();
+        
+        // Iterate through the smart table and collect all allowed collection names
+        let keys = smart_table::keys(&allowed_collections.allowed_collections);
+        let i = 0;
+        let len = vector::length(&keys);
+        
+        while (i < len) {
+            let key = vector::borrow(&keys, i);
+            vector::push_back(&mut result, *key);
+            i = i + 1;
+        };
+        
+        result
     }
 
     // -------- Functions for staking and earning rewards -------- 
@@ -934,7 +954,7 @@ module movement_staking::tokenstaking
         aptos_framework::account::create_account_for_test(sender_addr);
         aptos_framework::account::create_account_for_test(receiver_addr);
         
-        // Test 1: No staking resources exist yet
+        // No staking resources exist yet
         assert!(!is_staking_enabled(sender_addr, string::utf8(b"NonExistent Collection")), 1);
         
         // Initialize the global registries for testing
@@ -961,7 +981,7 @@ module movement_staking::tokenstaking
             string::utf8(b"uri"),
         );
         
-        // Test 2: Collection exists but no staking pool yet
+        // Collection exists but no staking pool yet
         assert!(!is_staking_enabled(sender_addr, string::utf8(b"Test Collection")), 2);
         
         // Add collection to allowed list before creating staking
@@ -970,19 +990,19 @@ module movement_staking::tokenstaking
         // Create staking pool
         create_staking(&creator, 20, string::utf8(b"Test Collection"), 90, metadata, true);
         
-        // Test 3: Staking pool exists and is enabled by default
+        // Staking pool exists and is enabled by default
         assert!(is_staking_enabled(sender_addr, string::utf8(b"Test Collection")), 3);
         
         // Stop staking
         creator_stop_staking(&creator, string::utf8(b"Test Collection"));
         
-        // Test 4: Staking pool exists but is stopped
+        // Staking pool exists but is stopped
         assert!(!is_staking_enabled(sender_addr, string::utf8(b"Test Collection")), 4);
         
         // Re-enable staking by depositing rewards
         deposit_staking_rewards(&creator, string::utf8(b"Test Collection"), 10);
         
-        // Test 5: Staking pool re-enabled after deposit
+        // Staking pool re-enabled after deposit
         assert!(is_staking_enabled(sender_addr, string::utf8(b"Test Collection")), 5);
     }
 
@@ -1753,5 +1773,55 @@ module movement_staking::tokenstaking
         
         // Try to add collection as non-admin - should fail
         add_allowed_collection(&receiver, string::utf8(b"Test Collection"));
+    }
+
+    #[test(creator = @0xa11ce, token_staking = @movement_staking)]
+    fun test_get_allowed_collections(
+        creator: signer,
+        token_staking: signer,
+    ) acquires AllowedCollectionsRegistry {
+        let creator_addr = signer::address_of(&creator);
+        
+        // Create account
+        aptos_framework::account::create_account_for_test(creator_addr);
+        
+        // Initialize the global registry for testing
+        move_to(&token_staking, AllowedCollectionsRegistry {
+            allowed_collections: smart_table::new(),
+            admin: creator_addr,
+        });
+        
+        // Initially empty list
+        let allowed_collections = get_allowed_collections();
+        assert!(vector::length(&allowed_collections) == 0, 1);
+        
+        // Add one collection
+        add_allowed_collection(&creator, string::utf8(b"Collection A"));
+        let allowed_collections = get_allowed_collections();
+        assert!(vector::length(&allowed_collections) == 1, 2);
+        assert!(vector::contains(&allowed_collections, &string::utf8(b"Collection A")), 3);
+        
+        // Add multiple collections
+        add_allowed_collection(&creator, string::utf8(b"Collection B"));
+        add_allowed_collection(&creator, string::utf8(b"Collection C"));
+        let allowed_collections = get_allowed_collections();
+        assert!(vector::length(&allowed_collections) == 3, 4);
+        assert!(vector::contains(&allowed_collections, &string::utf8(b"Collection A")), 5);
+        assert!(vector::contains(&allowed_collections, &string::utf8(b"Collection B")), 6);
+        assert!(vector::contains(&allowed_collections, &string::utf8(b"Collection C")), 7);
+        
+        // Remove a collection
+        remove_allowed_collection(&creator, string::utf8(b"Collection B"));
+        let allowed_collections = get_allowed_collections();
+        assert!(vector::length(&allowed_collections) == 2, 8);
+        assert!(vector::contains(&allowed_collections, &string::utf8(b"Collection A")), 9);
+        assert!(!vector::contains(&allowed_collections, &string::utf8(b"Collection B")), 10);
+        assert!(vector::contains(&allowed_collections, &string::utf8(b"Collection C")), 11);
+        
+        // Remove all collections
+        remove_allowed_collection(&creator, string::utf8(b"Collection A"));
+        remove_allowed_collection(&creator, string::utf8(b"Collection C"));
+        let allowed_collections = get_allowed_collections();
+        assert!(vector::length(&allowed_collections) == 0, 12);
     }
 }
