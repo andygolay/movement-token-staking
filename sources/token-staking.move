@@ -7,7 +7,7 @@
 // - Add view function to see user's staked NFTs (COMPLETED)
 // - Add view function to see user's accumulated rewards
 // - Add batch stake function (COMPLETED)
-// = Add view function for allowed collections for staking
+// = Add view function for allowed collections for staking (COMPLETED)
 
 module movement_staking::tokenstaking
 {
@@ -258,6 +258,104 @@ module movement_staking::tokenstaking
         };
         
         result
+    }
+
+    #[view]
+    /// Returns accumulated rewards for a user for a specific fungible asset metadata
+    public fun get_user_accumulated_rewards(user_address: address, metadata: Object<fungible_asset::Metadata>): u64 acquires StakedNFTsRegistry, MovementReward, MovementStaking, ResourceInfo {
+        // Check if user has any staked NFTs
+        let registry = borrow_global<StakedNFTsRegistry>(@movement_staking);
+        if (!smart_table::contains(&registry.staked_nfts, user_address)) {
+            return 0
+        };
+        
+        let staked_nfts = smart_table::borrow(&registry.staked_nfts, user_address);
+        let total_rewards = 0u64;
+        let i = 0;
+        let len = vector::length(staked_nfts);
+        
+        while (i < len) {
+            let nft_info = vector::borrow(staked_nfts, i);
+            
+            // Calculate seed for the reward treasury
+            let seed = nft_info.collection_name;
+            let seed2 = nft_info.token_name;
+            append(&mut seed, seed2);
+            
+            // Get the reward treasury address
+            let reward_treasury_address = get_resource_address(user_address, seed);
+            
+            // Check if reward data exists and calculate rewards
+            if (exists<MovementReward>(reward_treasury_address)) {
+                let reward_data = borrow_global<MovementReward>(reward_treasury_address);
+                
+                // Get staking pool data to get the daily percentage return
+                let creator_addr = token::creator(object::address_to_object<Token>(nft_info.nft_object_address));
+                let staking_address = get_resource_address(creator_addr, nft_info.collection_name);
+                
+                if (exists<MovementStaking>(staking_address)) {
+                    let staking_data = borrow_global<MovementStaking>(staking_address);
+                    
+                    // Only calculate rewards if this staking pool uses the specified metadata
+                    if (object::object_address(&staking_data.metadata) == object::object_address(&metadata)) {
+                        // Calculate accumulated rewards
+                        let now = aptos_framework::timestamp::now_seconds();
+                        let time_diff = now - reward_data.start_time;
+                        let days = time_diff / 86400; // Convert seconds to days
+                        
+                        // Calculate rewards: (dpr * days * tokens) - withdraw_amount
+                        let earned_rewards = (staking_data.dpr * days * reward_data.tokens);
+                        let net_rewards = if (earned_rewards > reward_data.withdraw_amount) {
+                            earned_rewards - reward_data.withdraw_amount
+                        } else {
+                            0
+                        };
+                        
+                        total_rewards = total_rewards + net_rewards;
+                    };
+                };
+            };
+            
+            i = i + 1;
+        };
+        
+        total_rewards
+    }
+
+    #[view]
+    /// Returns all unique fungible asset metadata that a user has staked NFTs for
+    public fun get_user_reward_metadata_types(user_address: address): vector<Object<fungible_asset::Metadata>> acquires StakedNFTsRegistry, MovementStaking, ResourceInfo {
+        // Check if user has any staked NFTs
+        let registry = borrow_global<StakedNFTsRegistry>(@movement_staking);
+        if (!smart_table::contains(&registry.staked_nfts, user_address)) {
+            return vector::empty<Object<fungible_asset::Metadata>>()
+        };
+        
+        let staked_nfts = smart_table::borrow(&registry.staked_nfts, user_address);
+        let metadata_types = vector::empty<Object<fungible_asset::Metadata>>();
+        let i = 0;
+        let len = vector::length(staked_nfts);
+        
+        while (i < len) {
+            let nft_info = vector::borrow(staked_nfts, i);
+            
+            // Get staking pool data to get the metadata
+            let creator_addr = token::creator(object::address_to_object<Token>(nft_info.nft_object_address));
+            let staking_address = get_resource_address(creator_addr, nft_info.collection_name);
+            
+            if (exists<MovementStaking>(staking_address)) {
+                let staking_data = borrow_global<MovementStaking>(staking_address);
+                
+                // Check if this metadata is already in our result vector
+                if (!vector::contains(&metadata_types, &staking_data.metadata)) {
+                    vector::push_back(&mut metadata_types, staking_data.metadata);
+                };
+            };
+            
+            i = i + 1;
+        };
+        
+        metadata_types
     }
 
     // -------- Functions for staking and earning rewards -------- 
@@ -1823,5 +1921,167 @@ module movement_staking::tokenstaking
         remove_allowed_collection(&creator, string::utf8(b"Collection C"));
         let allowed_collections = get_allowed_collections();
         assert!(vector::length(&allowed_collections) == 0, 12);
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
+    fun test_get_user_accumulated_rewards(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+        framework: signer,
+    ) acquires ResourceInfo, MovementStaking, MovementReward, StakedNFTsRegistry, AllowedCollectionsRegistry {
+        let creator_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        
+        // Set up global time for testing
+        timestamp::set_time_has_started_for_testing(&framework);
+        
+        // Create accounts
+        aptos_framework::account::create_account_for_test(creator_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Initialize the global registries for testing
+        move_to(&token_staking, StakedNFTsRegistry {
+            staked_nfts: smart_table::new(),
+        });
+        move_to(&token_staking, AllowedCollectionsRegistry {
+            allowed_collections: smart_table::new(),
+            admin: creator_addr,
+        });
+        
+        // Initialize both FA modules
+        banana_a::test_init(&token_staking);
+        banana_b::test_init(&token_staking);
+        let banana_a_metadata = banana_a::get_metadata();
+        let banana_b_metadata = banana_b::get_metadata();
+        banana_a::mint(&token_staking, creator_addr, 1000);
+        banana_b::mint(&token_staking, creator_addr, 1000);
+        
+        // Create collections
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Rewards Test Collection A"),
+            string::utf8(b"Rewards Test Collection A"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Rewards Test Collection B"),
+            string::utf8(b"Rewards Test Collection B"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Add collections to allowed list
+        add_allowed_collection(&creator, string::utf8(b"Rewards Test Collection A"));
+        add_allowed_collection(&creator, string::utf8(b"Rewards Test Collection B"));
+        
+        // Create staking pools with different DPRs and different metadata
+        create_staking(&creator, 20, string::utf8(b"Rewards Test Collection A"), 500, banana_a_metadata, false);
+        create_staking(&creator, 30, string::utf8(b"Rewards Test Collection B"), 300, banana_b_metadata, false);
+        
+        // Create tokens
+        let token_a_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Rewards Test Collection A"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token A"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token_b_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Rewards Test Collection B"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token B"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        let token_a_addr = object::address_from_constructor_ref(&token_a_ref);
+        let token_b_addr = object::address_from_constructor_ref(&token_b_ref);
+        
+        // Transfer tokens to receiver
+        object::transfer(&creator, object::address_to_object<Token>(token_a_addr), receiver_addr);
+        object::transfer(&creator, object::address_to_object<Token>(token_b_addr), receiver_addr);
+        
+        // Initially no rewards for either metadata type
+        let initial_rewards_a = get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let initial_rewards_b = get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        assert!(initial_rewards_a == 0, 1);
+        assert!(initial_rewards_b == 0, 2);
+        
+        // Stake both tokens
+        stake_token(&receiver, object::address_to_object<Token>(token_a_addr));
+        stake_token(&receiver, object::address_to_object<Token>(token_b_addr));
+        
+        // Still no rewards immediately after staking
+        let rewards_after_staking_a = get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let rewards_after_staking_b = get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        assert!(rewards_after_staking_a == 0, 3);
+        assert!(rewards_after_staking_b == 0, 4);
+        
+        // Advance time by 1 day (86400 seconds)
+        timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
+        
+        // Calculate expected rewards after 1 day:
+        // Collection A (banana_a): 20 DPR * 1 day * 1 token = 20
+        // Collection B (banana_b): 30 DPR * 1 day * 1 token = 30
+        let rewards_after_1_day_a = get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let rewards_after_1_day_b = get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        assert!(rewards_after_1_day_a == 20, 5);
+        assert!(rewards_after_1_day_b == 30, 6);
+        
+        // Advance time by another day (cumulative: 2 days total)
+        timestamp::update_global_time_for_test(2 * 86400 * 1000000); // microseconds
+        
+        // After 2 days:
+        // Collection A (banana_a): 20 DPR * 2 days * 1 token = 40
+        // Collection B (banana_b): 30 DPR * 2 days * 1 token = 60
+        let rewards_after_2_days_a = get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let rewards_after_2_days_b = get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        assert!(rewards_after_2_days_a == 40, 7);
+        assert!(rewards_after_2_days_b == 60, 8);
+        
+        // Test the helper function to get metadata types
+        let metadata_types = get_user_reward_metadata_types(receiver_addr);
+        assert!(vector::length(&metadata_types) == 2, 9); // Should have both banana_a and banana_b
+        assert!(vector::contains(&metadata_types, &banana_a_metadata), 10);
+        assert!(vector::contains(&metadata_types, &banana_b_metadata), 11);
+        
+        // Claim rewards from Collection A (banana_a)
+        claim_reward(&receiver, string::utf8(b"Rewards Test Collection A"), string::utf8(b"Token A"), creator_addr);
+        
+        // After claiming, banana_a rewards should be reduced, banana_b should be unchanged
+        let rewards_after_claiming_a = get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let rewards_after_claiming_b = get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        assert!(rewards_after_claiming_a == 0, 12); // Collection A rewards claimed
+        assert!(rewards_after_claiming_b == 60, 13); // Collection B rewards unchanged
+        
+        // Unstake Collection B token (this resets reward data)
+        unstake_token(&receiver, creator_addr, string::utf8(b"Rewards Test Collection B"), string::utf8(b"Token B"));
+        
+        // After unstaking, rewards are reset to 0 for Collection B
+        let rewards_after_unstaking_a = get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let rewards_after_unstaking_b = get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        assert!(rewards_after_unstaking_a == 0, 14); // Collection A still 0
+        assert!(rewards_after_unstaking_b == 0, 15); // Collection B reset to 0 after unstaking
+        
+        // Advance time again - Collection A continues accruing, Collection B doesn't (unstaked)
+        timestamp::update_global_time_for_test(3 * 86400 * 1000000); // microseconds (cumulative: 3 days total)
+        let rewards_after_more_time_a = get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let rewards_after_more_time_b = get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        // Collection A: 20 DPR * 3 days * 1 token = 60 total, minus 40 withdrawn = 20 remaining
+        assert!(rewards_after_more_time_a == 20, 16); // Collection A continues accruing
+        assert!(rewards_after_more_time_b == 0, 17); // Collection B still 0 (unstaked)
+        
+        // Test with user who has no staked NFTs
+        let no_stakes_user = @0x999;
+        aptos_framework::account::create_account_for_test(no_stakes_user);
+        let rewards_no_stakes_a = get_user_accumulated_rewards(no_stakes_user, banana_a_metadata);
+        let rewards_no_stakes_b = get_user_accumulated_rewards(no_stakes_user, banana_b_metadata);
+        assert!(rewards_no_stakes_a == 0, 18);
+        assert!(rewards_no_stakes_b == 0, 19);
     }
 }
