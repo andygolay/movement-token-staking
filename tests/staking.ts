@@ -40,7 +40,7 @@ async function getNftObjectIdByIndexer(ownerHex: string, collectionName: string,
 }
 
 // Deployed package ID (module address)
-const pid = "0x218d8906d9afac435c683b12a19fbb14a082460fa86c05554108069c1c173d19";
+const pid = "0xc2525f0bfcdfa2580d5e306698aab47c4fa952f21427063bc51754b7068a6b80";
 
 // Accounts
 const account1 = new AptosAccount(); // creator
@@ -50,10 +50,10 @@ const account2 = new AptosAccount(); // staker
 console.log("account2", account2.address());
 
 // NFT metadata
-const collection = "Movement Collection";
-const tokenname = "Movement Token #1";
-const description = "Movement Token for DA test";
-const uri = "https://github.com/movementprotocol";
+const collection = "Whale Collection";
+const tokenname = "Whale Token #2";
+const description = "Whale Token for DA test";
+const uri = "https://cdn.pixabay.com/photo/2025/05/24/12/40/whale-9619752_1280.png";
 
 // Placeholders you must fill using your FA / DA creation flows or indexer:
 // - REWARD_METADATA_OBJECT_ADDRESS: Object<fungible_asset::Metadata> for the reward coin
