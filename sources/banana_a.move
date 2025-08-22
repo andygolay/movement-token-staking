@@ -9,6 +9,7 @@ module movement_staking::banana_a {
     use std::string::utf8;
     use std::option;
     friend movement_staking::nft_staking;
+    friend movement_staking::freeze_registry;
 
     /// Only fungible asset metadata owner can make changes.
     const ENOT_OWNER: u64 = 1;

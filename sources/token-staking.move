@@ -22,8 +22,11 @@ module movement_staking::nft_staking
     use aptos_framework::timestamp;
     use aptos_token_objects::collection::Self;
     use aptos_token_objects::token::{Self, Token};
+    #[test_only]
     use movement_staking::banana_a;
+    #[test_only]
     use movement_staking::banana_b;
+    use movement_staking::freeze_registry;
     use aptos_std::simple_map::{Self, SimpleMap};
     use aptos_std::smart_table::{Self, SmartTable};
     use std::bcs::to_bytes;
@@ -696,21 +699,8 @@ module movement_staking::nft_staking
 
     /// Helper function to freeze a user's account for a specific FA metadata
     fun freeze_user_account(user: &signer, metadata: Object<fungible_asset::Metadata>) {
-        let metadata_addr = object::object_address(&metadata);
-        
-        // Check if this is banana_a metadata
-        if (metadata_addr == object::object_address(&banana_a::get_metadata())) {
-            banana_a::freeze_own_account(user);
-            return
-        };
-        
-        // Check if this is banana_b metadata
-        if (metadata_addr == object::object_address(&banana_b::get_metadata())) {
-            banana_b::freeze_own_account(user);
-            return
-        };
-        
-        // If it's neither, do nothing (could be a different FA)
+        // Delegate freezing logic to the freeze_registry module
+        freeze_registry::freeze_user_account(user, metadata);
     }
 
 
