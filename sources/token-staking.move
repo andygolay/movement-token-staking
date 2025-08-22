@@ -5,11 +5,11 @@
 // - Add registry of staked NFTs per user (COMPLETED)
 // - Add list of allowed collection IDs (COMPLETED)
 // - Add view function to see user's staked NFTs (COMPLETED)
-// - Add view function to see user's accumulated rewards
+// - Add view function to see user's accumulated rewards (COMPLETED)
 // - Add batch stake function (COMPLETED)
 // = Add view function for allowed collections for staking (COMPLETED)
 
-module movement_staking::tokenstaking
+module movement_staking::nft_staking
 {
     use std::signer;
     use std::string::{String, append};
@@ -2083,5 +2083,35 @@ module movement_staking::tokenstaking
         let rewards_no_stakes_b = get_user_accumulated_rewards(no_stakes_user, banana_b_metadata);
         assert!(rewards_no_stakes_a == 0, 18);
         assert!(rewards_no_stakes_b == 0, 19);
+    }
+
+    #[test_only]
+    public fun test_init_registries(token_staking: &signer) {
+        // Initialize the global registries for testing
+        move_to(token_staking, StakedNFTsRegistry {
+            staked_nfts: smart_table::new(),
+        });
+        move_to(token_staking, AllowedCollectionsRegistry {
+            allowed_collections: smart_table::new(),
+            admin: signer::address_of(token_staking),
+        });
+    }
+    
+    // #[test_only]
+    // public fun test_add_collection_to_allowed(token_staking: &signer, collection_name: String) {
+    //     let allowed_collections = borrow_global_mut<AllowedCollectionsRegistry>(@movement_staking);
+    //     smart_table::add(&mut allowed_collections.allowed_collections, collection_name, true);
+    // }
+
+    #[test_only]
+    public fun test_init_registries_with_admin(token_staking: &signer, admin_addr: address) {
+        // Initialize the global registries for testing
+        move_to(token_staking, StakedNFTsRegistry {
+            staked_nfts: smart_table::new(),
+        });
+        move_to(token_staking, AllowedCollectionsRegistry {
+            allowed_collections: smart_table::new(),
+            admin: admin_addr,
+        });
     }
 }

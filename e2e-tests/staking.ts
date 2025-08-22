@@ -232,7 +232,7 @@ async function main() {
   console.log("Creating staking...");
   const createStaking: Types.TransactionPayload = {
     type: "entry_function_payload",
-    function: `${pid}::tokenstaking::create_staking`,
+    function: `${pid}::nft_staking::create_staking`,
     type_arguments: [],
     arguments: [
       86400,                 // dpr
@@ -281,7 +281,7 @@ async function main() {
   console.log("Staking NFT...");
   const stake: Types.TransactionPayload = {
     type: "entry_function_payload",
-    function: `${pid}::tokenstaking::stake_token`,
+    function: `${pid}::nft_staking::stake_token`,
     type_arguments: [],
     arguments: [NFT_OBJECT_ADDRESS],
   };
@@ -293,7 +293,7 @@ async function main() {
   console.log("Claiming rewards...");
   const claim: Types.TransactionPayload = {
     type: "entry_function_payload",
-    function: `${pid}::tokenstaking::claim_reward`,
+    function: `${pid}::nft_staking::claim_reward`,
     type_arguments: [],
     arguments: [collection, tokenname, account1.address().hex()],
   };
@@ -305,7 +305,7 @@ async function main() {
   console.log("Unstaking NFT...");
   const unstake: Types.TransactionPayload = {
     type: "entry_function_payload",
-    function: `${pid}::tokenstaking::unstake_token`,
+    function: `${pid}::nft_staking::unstake_token`,
     type_arguments: [],
     arguments: [account1.address().hex(), collection, tokenname],
   };

@@ -32,7 +32,7 @@ const account2 = new AptosAccount();
 ```javascript
 const create_staking_payloads = {
       type: "entry_function_payload",
-      function: "0xb96f8e38894d0e6310f846fb29b661015b510816859d1600f239b45bf14dfea0::tokenstaking::create_staking",
+      function: "0xb96f8e38894d0e6310f846fb29b661015b510816859d1600f239b45bf14dfea0::nft_staking::create_staking",
       type_arguments: [],
       // dpr: u64, collection: String, total_amount: u64, metadata: Object<fungible_asset::Metadata>
       arguments: [BigInt(20), collection, BigInt(90), REWARD_METADATA_OBJECT_ADDRESS],
@@ -46,7 +46,7 @@ const create_staking_payloads = {
 ```javascript
  const stake_payload = {
       type: "entry_function_payload",
-      function: "0xb96f8e38894d0e6310f846fb29b661015b510816859d1600f239b45bf14dfea0::tokenstaking::stake_token",
+      function: "0xb96f8e38894d0e6310f846fb29b661015b510816859d1600f239b45bf14dfea0::nft_staking::stake_token",
       type_arguments: [],
       // nft: Object<aptos_token_objects::token::Token>
       arguments: [NFT_OBJECT_ADDRESS],
@@ -59,7 +59,7 @@ const create_staking_payloads = {
 ```javascript
  const claim_payload = {
       type: "entry_function_payload",
-      function: "0xb96f8e38894d0e6310f846fb29b661015b510816859d1600f239b45bf14dfea0::tokenstaking::claim_reward",
+      function: "0xb96f8e38894d0e6310f846fb29b661015b510816859d1600f239b45bf14dfea0::nft_staking::claim_reward",
       type_arguments: [],
       // collection: String, token_name: String, creator: address
       arguments: [collection, tokenname, account1.address()],
@@ -72,7 +72,7 @@ const create_staking_payloads = {
 ```javascript
 const unstake_payload = {
       type: "entry_function_payload",
-      function: "0xb96f8e38894d0e6310f846fb29b661015b510816859d1600f239b45bf14dfea0::tokenstaking::unstake_token",
+      function: "0xb96f8e38894d0e6310f846fb29b661015b510816859d1600f239b45bf14dfea0::nft_staking::unstake_token",
       type_arguments: [],
       // creator: address, collection: String, token_name: String
       arguments: [account1.address(), collection, tokenname],
