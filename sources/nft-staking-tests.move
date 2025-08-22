@@ -1,5 +1,5 @@
 #[test_only]
-module movement_staking::tokenstaking_tests {
+module movement_staking::nft_staking_tests {
     use std::signer;
     use std::string;
     use std::vector;
