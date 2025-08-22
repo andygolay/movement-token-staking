@@ -1,13 +1,5 @@
-//! Contract to stake NFTs (aka tokens) and earn FA rewards
-//! Adapted from a contract created by Mokshya Protocol
-
-// TODO: 
-// - Add registry of staked NFTs per user (COMPLETED)
-// - Add list of allowed collection IDs (COMPLETED)
-// - Add view function to see user's staked NFTs (COMPLETED)
-// - Add view function to see user's accumulated rewards (COMPLETED)
-// - Add batch stake function (COMPLETED)
-// = Add view function for allowed collections for staking (COMPLETED)
+/// Contract to stake NFTs (aka tokens) and earn FA rewards
+/// Adapted from a contract created by Mokshya Protocol
 
 module movement_staking::nft_staking
 {
