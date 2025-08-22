@@ -17,6 +17,7 @@ module movement_staking::nft_staking_tests {
     
     // Test modules for fungible assets
     use movement_staking::banana_a;
+    use movement_staking::banana_b;
     
     // Test addresses
     const CREATOR_ADDR: address = @0xa11ce;
@@ -489,23 +490,89 @@ module movement_staking::nft_staking_tests {
         assert!(object::owner(object::address_to_object<Token>(token_addr)) == receiver_addr, 4);
     }
 
+
+
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
-    fun test_is_staking_enabled(
+    fun test_create_staking(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer
+    ) {
+        let sender_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        aptos_framework::account::create_account_for_test(sender_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Initialize global registries for testing with creator as admin
+        nft_staking::test_init_registries_with_admin(&token_staking, sender_addr);
+        
+        // Initialize banana_a FA module
+        banana_a::test_init(&token_staking);
+        let metadata = banana_a::get_metadata();
+        banana_a::mint(&token_staking, sender_addr, 100);
+        
+        // Create DA collection to satisfy existence check
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Collection for Test"),
+            string::utf8(b"Movement Collection"),
+            option::none(),
+            string::utf8(b"https://github.com/movementprotocol"),
+        );
+        
+        // Get collection object for operations
+        let collection_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Movement Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
+        // Add collection to allowed list before creating staking
+        nft_staking::add_allowed_collection(&creator, collection_obj);
+        
+        nft_staking::create_staking(
+            &creator,
+            20,
+            collection_obj,
+            90,
+            metadata,
+            true);
+        nft_staking::update_dpr(
+            &creator,
+            30,
+            collection_obj,
+        );
+        nft_staking::creator_stop_staking(
+            &creator,
+            collection_obj,
+        );
+        
+        // Verify staking is stopped
+        assert!(!nft_staking::is_staking_enabled(sender_addr, collection_obj), 98);
+        
+        nft_staking::deposit_staking_rewards(
+            &creator,
+            collection_obj,
+            5
+        );
+        
+        // Verify staking is re-enabled after deposit
+        assert!(nft_staking::is_staking_enabled(sender_addr, collection_obj), 88);
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
+    #[expected_failure(abort_code = 0x4, location = movement_staking::nft_staking)]
+    fun test_stake_when_stopped(
         creator: signer,
         receiver: signer,
         token_staking: signer,
     ) {
         let sender_addr = signer::address_of(&creator);
         let receiver_addr = signer::address_of(&receiver);
-        
-        // Create accounts
         aptos_framework::account::create_account_for_test(sender_addr);
         aptos_framework::account::create_account_for_test(receiver_addr);
         
-        // Initialize the global registries for testing
+        // Initialize global registries for testing with creator as admin
         nft_staking::test_init_registries_with_admin(&token_staking, sender_addr);
         
-        // Initialize FA module
+        // Initialize banana_a FA module
         banana_a::test_init(&token_staking);
         let metadata = banana_a::get_metadata();
         banana_a::mint(&token_staking, sender_addr, 100);
@@ -523,7 +590,777 @@ module movement_staking::nft_staking_tests {
         let collection_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Test Collection"));
         let collection_obj = object::address_to_object<Collection>(collection_addr);
         
-        // Collection exists but no staking pool yet
+        // Add collection to allowed list before creating staking
+        nft_staking::add_allowed_collection(&creator, collection_obj);
+        
+        let token_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Test Collection"),
+            string::utf8(b"desc"),
+            string::utf8(b"Movement Token #S"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token_addr = object::address_from_constructor_ref(&token_ref);
+        object::transfer(&creator, object::address_to_object<Token>(token_addr), receiver_addr);
+        
+        // Pool then stop
+        nft_staking::create_staking(&creator, 10, collection_obj, 90, metadata, true);
+        nft_staking::creator_stop_staking(&creator, collection_obj);
+        
+        // Attempt stake (should abort with ENO_STOPPED=4)
+        nft_staking::stake_token(&receiver, object::address_to_object<Token>(token_addr));
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
+    fun test_multiple_fa_staking_with_freezing(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+        framework: signer,
+    ) {
+        let sender_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        
+        // Set up global time for testing
+        timestamp::set_time_has_started_for_testing(&framework);
+        
+        // Create accounts
+        aptos_framework::account::create_account_for_test(sender_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Initialize global registries for testing with creator as admin
+        nft_staking::test_init_registries_with_admin(&token_staking, sender_addr);
+        
+        // Initialize both FA modules
+        banana_a::test_init(&token_staking);
+        banana_b::test_init(&token_staking);
+        
+        // Get metadata for both FAs
+        let banana_a_metadata = banana_a::get_metadata();
+        let banana_b_metadata = banana_b::get_metadata();
+        
+        // Mint some tokens to creator for both FAs
+        banana_a::mint(&token_staking, sender_addr, 1000);
+        banana_b::mint(&token_staking, sender_addr, 1000);
+        
+        // Create DA collections for both FAs
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Test Collection A"),
+            string::utf8(b"Test Collection A"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Test Collection B"),
+            string::utf8(b"Test Collection B"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Get collection objects for operations
+        let collection_a_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Test Collection A"));
+        let collection_a_obj = object::address_to_object<Collection>(collection_a_addr);
+        let collection_b_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Test Collection B"));
+        let collection_b_obj = object::address_to_object<Collection>(collection_b_addr);
+        
+        // Add collections to allowed list before creating staking
+        nft_staking::add_allowed_collection(&creator, collection_a_obj);
+        nft_staking::add_allowed_collection(&creator, collection_b_obj);
+        
+        // Create two different tokens
+        let token_a_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Test Collection A"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token A"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token_b_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Test Collection B"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token B"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        let token_a_addr = object::address_from_constructor_ref(&token_a_ref);
+        let token_b_addr = object::address_from_constructor_ref(&token_b_ref);
+        
+        // Transfer tokens to receiver
+        object::transfer(&creator, object::address_to_object<Token>(token_a_addr), receiver_addr);
+        object::transfer(&creator, object::address_to_object<Token>(token_b_addr), receiver_addr);
+        
+        // Create staking pools for both FAs (different collections to avoid resource account conflicts)
+        nft_staking::create_staking(&creator, 20, collection_a_obj, 500, banana_a_metadata, true);
+        nft_staking::create_staking(&creator, 15, collection_b_obj, 300, banana_b_metadata, true);
+        
+        // Stake both tokens
+        nft_staking::stake_token(&receiver, object::address_to_object<Token>(token_a_addr));
+        nft_staking::stake_token(&receiver, object::address_to_object<Token>(token_b_addr));
+        
+        // Advance time by 1 day (86400 seconds) to accrue rewards
+        timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
+        
+        // Claim rewards for both tokens
+        nft_staking::claim_reward(&receiver, collection_a_obj, string::utf8(b"Token A"), sender_addr);
+        nft_staking::claim_reward(&receiver, collection_b_obj, string::utf8(b"Token B"), sender_addr);
+        
+        // Verify that both accounts are frozen after claiming rewards (soulbound)
+        assert!(primary_fungible_store::is_frozen(receiver_addr, banana_a_metadata), 1);
+        assert!(primary_fungible_store::is_frozen(receiver_addr, banana_b_metadata), 2);
+        
+        // Verify balances increased after time advancement and reward claiming
+        let banana_a_balance = primary_fungible_store::balance(receiver_addr, banana_a_metadata);
+        let banana_b_balance = primary_fungible_store::balance(receiver_addr, banana_b_metadata);
+        assert!(banana_a_balance > 0, 3);
+        assert!(banana_b_balance > 0, 4);
+        
+        // Unstake both tokens (should work even with frozen accounts thanks to transfer_with_ref)
+        nft_staking::unstake_token(&receiver, sender_addr, collection_a_obj, string::utf8(b"Token A"));
+        nft_staking::unstake_token(&receiver, sender_addr, collection_b_obj, string::utf8(b"Token B"));
+        
+        // Verify tokens are returned
+        assert!(object::owner(object::address_to_object<Token>(token_a_addr)) == receiver_addr, 5);
+        assert!(object::owner(object::address_to_object<Token>(token_b_addr)) == receiver_addr, 6);
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
+    fun test_multiple_fa_staking_without_freezing(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+        framework: signer,
+    ) {
+        let sender_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        
+        // Set up global time for testing
+        timestamp::set_time_has_started_for_testing(&framework);
+        
+        // Create accounts
+        aptos_framework::account::create_account_for_test(sender_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Initialize global registries for testing with creator as admin
+        nft_staking::test_init_registries_with_admin(&token_staking, sender_addr);
+        
+        // Initialize both FA modules
+        banana_a::test_init(&token_staking);
+        banana_b::test_init(&token_staking);
+        
+        // Get metadata for both FAs
+        let banana_a_metadata = banana_a::get_metadata();
+        let banana_b_metadata = banana_b::get_metadata();
+        
+        // Mint some tokens to creator for both FAs
+        banana_a::mint(&token_staking, sender_addr, 1000);
+        banana_b::mint(&token_staking, sender_addr, 1000);
+        
+        // Create DA collections for both FAs
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Test Collection C"),
+            string::utf8(b"Test Collection C"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Test Collection D"),
+            string::utf8(b"Test Collection D"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Get collection objects for operations
+        let collection_c_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Test Collection C"));
+        let collection_c_obj = object::address_to_object<Collection>(collection_c_addr);
+        let collection_d_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Test Collection D"));
+        let collection_d_obj = object::address_to_object<Collection>(collection_d_addr);
+        
+        // Add collections to allowed list before creating staking
+        nft_staking::add_allowed_collection(&creator, collection_c_obj);
+        nft_staking::add_allowed_collection(&creator, collection_d_obj);
+        
+        // Create two different tokens
+        let token_a_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Test Collection C"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token C"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token_b_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Test Collection D"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token D"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        let token_a_addr = object::address_from_constructor_ref(&token_a_ref);
+        let token_b_addr = object::address_from_constructor_ref(&token_b_ref);
+        
+        // Transfer tokens to receiver
+        object::transfer(&creator, object::address_to_object<Token>(token_a_addr), receiver_addr);
+        object::transfer(&creator, object::address_to_object<Token>(token_b_addr), receiver_addr);
+        
+        // Create staking pools for both FAs with freezing DISABLED (is_locked = false)
+        nft_staking::create_staking(&creator, 20, collection_c_obj, 500, banana_a_metadata, false);
+        nft_staking::create_staking(&creator, 15, collection_d_obj, 300, banana_b_metadata, false);
+        
+        // Stake both tokens
+        nft_staking::stake_token(&receiver, object::address_to_object<Token>(token_a_addr));
+        nft_staking::stake_token(&receiver, object::address_to_object<Token>(token_b_addr));
+        
+        // Advance time by 1 day (86400 seconds) to accrue rewards
+        timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
+        
+        // Claim rewards for both tokens
+        nft_staking::claim_reward(&receiver, collection_c_obj, string::utf8(b"Token C"), sender_addr);
+        nft_staking::claim_reward(&receiver, collection_d_obj, string::utf8(b"Token D"), sender_addr);
+        
+        // Verify that both accounts are NOT frozen after claiming rewards (no soulbound)
+        assert!(!primary_fungible_store::is_frozen(receiver_addr, banana_a_metadata), 1);
+        assert!(!primary_fungible_store::is_frozen(receiver_addr, banana_b_metadata), 2);
+        
+        // Verify balances increased after time advancement and reward claiming
+        let banana_a_balance = primary_fungible_store::balance(receiver_addr, banana_a_metadata);
+        let banana_b_balance = primary_fungible_store::balance(receiver_addr, banana_b_metadata);
+        assert!(banana_a_balance > 0, 3);
+        assert!(banana_b_balance > 0, 4);
+        
+        // Unstake both tokens (should work normally since accounts are not frozen)
+        nft_staking::unstake_token(&receiver, sender_addr, collection_c_obj, string::utf8(b"Token C"));
+        nft_staking::unstake_token(&receiver, sender_addr, collection_d_obj, string::utf8(b"Token D"));
+        
+        // Verify tokens are returned
+        assert!(object::owner(object::address_to_object<Token>(token_a_addr)) == receiver_addr, 5);
+        assert!(object::owner(object::address_to_object<Token>(token_b_addr)) == receiver_addr, 6);
+    }
+
+    #[test(creator = @0x123, user1 = @0x456, user2 = @0x789, token_staking = @0xfee, framework = @0x1)]
+    fun test_registry_functionality(
+        creator: signer,
+        user1: signer,
+        user2: signer,
+        token_staking: signer,
+        framework: signer,
+    ) {
+        let creator_addr = signer::address_of(&creator);
+        let user1_addr = signer::address_of(&user1);
+        let user2_addr = signer::address_of(&user2);
+        
+        // Set up global time for testing
+        timestamp::set_time_has_started_for_testing(&framework);
+        
+        // Create accounts
+        aptos_framework::account::create_account_for_test(creator_addr);
+        aptos_framework::account::create_account_for_test(user1_addr);
+        aptos_framework::account::create_account_for_test(user2_addr);
+        
+        // Initialize global registries for testing with creator as admin
+        nft_staking::test_init_registries_with_admin(&token_staking, creator_addr);
+        
+        // Initialize FA module
+        banana_a::test_init(&token_staking);
+        let metadata = banana_a::get_metadata();
+        banana_a::mint(&token_staking, creator_addr, 1000);
+        
+        // Create collection
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Registry Test Collection"),
+            string::utf8(b"Registry Test Collection"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Get collection object for operations
+        let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Registry Test Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
+        // Add collection to allowed list before creating staking
+        nft_staking::add_allowed_collection(&creator, collection_obj);
+        
+        // Create multiple tokens
+        let token1_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Registry Test Collection"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token 1"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token2_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Registry Test Collection"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token 2"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token3_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Registry Test Collection"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token 3"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        let token1_addr = object::address_from_constructor_ref(&token1_ref);
+        let token2_addr = object::address_from_constructor_ref(&token2_ref);
+        let token3_addr = object::address_from_constructor_ref(&token3_ref);
+        
+        // Transfer tokens to users
+        object::transfer(&creator, object::address_to_object<Token>(token1_addr), user1_addr);
+        object::transfer(&creator, object::address_to_object<Token>(token2_addr), user1_addr);
+        object::transfer(&creator, object::address_to_object<Token>(token3_addr), user2_addr);
+        
+        // Create staking pool
+        nft_staking::create_staking(&creator, 10, collection_obj, 500, metadata, false);
+        
+        // Verify registry is initially empty using view functions
+        assert!(nft_staking::get_staked_nfts_count(user1_addr) == 0, 1);
+        assert!(nft_staking::get_staked_nfts_count(user2_addr) == 0, 2);
+        
+        // User1 stakes 2 tokens
+        nft_staking::stake_token(&user1, object::address_to_object<Token>(token1_addr));
+        nft_staking::stake_token(&user1, object::address_to_object<Token>(token2_addr));
+        
+        // User2 stakes 1 token
+        nft_staking::stake_token(&user2, object::address_to_object<Token>(token3_addr));
+        
+        // Verify registry contents after staking using view functions
+        assert!(nft_staking::get_staked_nfts_count(user1_addr) == 2, 3);
+        assert!(nft_staking::get_staked_nfts_count(user2_addr) == 1, 4);
+        
+        let user1_nfts = nft_staking::get_staked_nfts(user1_addr);
+        let user2_nfts = nft_staking::get_staked_nfts(user2_addr);
+        assert!(vector::length(&user1_nfts) == 2, 5);
+        assert!(vector::length(&user2_nfts) == 1, 6);
+        
+        // Unstake one token from user1
+        nft_staking::unstake_token(&user1, creator_addr, collection_obj, string::utf8(b"Token 1"));
+        
+        // Verify registry is updated after unstaking
+        assert!(nft_staking::get_staked_nfts_count(user1_addr) == 1, 7);
+        assert!(nft_staking::get_staked_nfts_count(user2_addr) == 1, 8); // User2 unchanged
+        
+        // Unstake remaining tokens
+        nft_staking::unstake_token(&user1, creator_addr, collection_obj, string::utf8(b"Token 2"));
+        nft_staking::unstake_token(&user2, creator_addr, collection_obj, string::utf8(b"Token 3"));
+        
+        // Verify registry is properly cleaned up
+        assert!(nft_staking::get_staked_nfts_count(user1_addr) == 0, 9);
+        assert!(nft_staking::get_staked_nfts_count(user2_addr) == 0, 10);
+    }
+
+    #[test(creator = @0x123, user1 = @0x456, token_staking = @0xfee, framework = @0x1)]
+    fun test_batch_staking_functionality(
+        creator: signer,
+        user1: signer,
+        token_staking: signer,
+        framework: signer,
+    ) {
+        let creator_addr = signer::address_of(&creator);
+        let user1_addr = signer::address_of(&user1);
+        
+        // Set up global time for testing
+        timestamp::set_time_has_started_for_testing(&framework);
+        
+        // Create accounts
+        aptos_framework::account::create_account_for_test(creator_addr);
+        aptos_framework::account::create_account_for_test(user1_addr);
+        
+        // Initialize global registries for testing with creator as admin
+        nft_staking::test_init_registries_with_admin(&token_staking, creator_addr);
+        
+        // Initialize FA module
+        banana_a::test_init(&token_staking);
+        let metadata = banana_a::get_metadata();
+        banana_a::mint(&token_staking, creator_addr, 1000);
+        
+        // Create collection
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Batch Test Collection"),
+            string::utf8(b"Batch Test Collection"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Get collection object for operations
+        let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Batch Test Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
+        // Add collection to allowed list before creating staking
+        nft_staking::add_allowed_collection(&creator, collection_obj);
+        
+        // Create multiple tokens
+        let token1_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Batch Test Collection"),
+            string::utf8(b"desc"),
+            string::utf8(b"Batch Token 1"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token2_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Batch Test Collection"),
+            string::utf8(b"desc"),
+            string::utf8(b"Batch Token 2"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token3_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Batch Test Collection"),
+            string::utf8(b"desc"),
+            string::utf8(b"Batch Token 3"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        let token1_addr = object::address_from_constructor_ref(&token1_ref);
+        let token2_addr = object::address_from_constructor_ref(&token2_ref);
+        let token3_addr = object::address_from_constructor_ref(&token3_ref);
+        
+        // Transfer tokens to user1
+        object::transfer(&creator, object::address_to_object<Token>(token1_addr), user1_addr);
+        object::transfer(&creator, object::address_to_object<Token>(token2_addr), user1_addr);
+        object::transfer(&creator, object::address_to_object<Token>(token3_addr), user1_addr);
+        
+        // Create staking pool
+        nft_staking::create_staking(&creator, 10, collection_obj, 500, metadata, false);
+        
+        // Verify registry is initially empty
+        assert!(nft_staking::get_staked_nfts_count(user1_addr) == 0, 1);
+        
+        // Create vector of NFTs to batch stake
+        let nfts_to_stake = vector::empty<object::Object<Token>>();
+        vector::push_back(&mut nfts_to_stake, object::address_to_object<Token>(token1_addr));
+        vector::push_back(&mut nfts_to_stake, object::address_to_object<Token>(token2_addr));
+        vector::push_back(&mut nfts_to_stake, object::address_to_object<Token>(token3_addr));
+        
+        // Batch stake all 3 tokens
+        nft_staking::batch_stake_tokens(&user1, nfts_to_stake);
+        
+        // Verify all tokens are no longer owned by user1 (they've been staked)
+        assert!(object::owner(object::address_to_object<Token>(token1_addr)) != user1_addr, 2);
+        assert!(object::owner(object::address_to_object<Token>(token2_addr)) != user1_addr, 3);
+        assert!(object::owner(object::address_to_object<Token>(token3_addr)) != user1_addr, 4);
+        
+        // Verify registry contains all 3 staked NFTs
+        assert!(nft_staking::get_staked_nfts_count(user1_addr) == 3, 5);
+        let staked_nfts = nft_staking::get_staked_nfts(user1_addr);
+        assert!(vector::length(&staked_nfts) == 3, 6);
+        
+        // Unstake all tokens individually to clean up
+        nft_staking::unstake_token(&user1, creator_addr, collection_obj, string::utf8(b"Batch Token 1"));
+        nft_staking::unstake_token(&user1, creator_addr, collection_obj, string::utf8(b"Batch Token 2"));
+        nft_staking::unstake_token(&user1, creator_addr, collection_obj, string::utf8(b"Batch Token 3"));
+        
+        // Verify registry is cleaned up
+        assert!(nft_staking::get_staked_nfts_count(user1_addr) == 0, 7);
+        let final_nfts = nft_staking::get_staked_nfts(user1_addr);
+        assert!(vector::length(&final_nfts) == 0, 8);
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
+    fun test_staked_nfts_view_functions(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+        framework: signer,
+    ) {
+        let creator_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        
+        // Set up global time for testing
+        timestamp::set_time_has_started_for_testing(&framework);
+        
+        // Create accounts
+        aptos_framework::account::create_account_for_test(creator_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Initialize global registries for testing with creator as admin
+        nft_staking::test_init_registries_with_admin(&token_staking, creator_addr);
+        
+        // Initialize FA module
+        banana_a::test_init(&token_staking);
+        let metadata = banana_a::get_metadata();
+        banana_a::mint(&token_staking, creator_addr, 1000);
+        
+        // Create collection
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"View Test Collection"),
+            string::utf8(b"View Test Collection"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Get collection object for operations
+        let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"View Test Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
+        // Add collection to allowed list before creating staking
+        nft_staking::add_allowed_collection(&creator, collection_obj);
+        
+        // Create token
+        let token_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"View Test Collection"),
+            string::utf8(b"desc"),
+            string::utf8(b"View Test Token"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        let token_addr = object::address_from_constructor_ref(&token_ref);
+        
+        // Transfer token to receiver
+        object::transfer(&creator, object::address_to_object<Token>(token_addr), receiver_addr);
+        
+        // Create staking pool
+        nft_staking::create_staking(&creator, 10, collection_obj, 500, metadata, false);
+        
+        // Test view functions before staking
+        assert!(nft_staking::get_staked_nfts_count(receiver_addr) == 0, 1);
+        let empty_nfts = nft_staking::get_staked_nfts(receiver_addr);
+        assert!(vector::length(&empty_nfts) == 0, 2);
+        
+        // Stake the token
+        nft_staking::stake_token(&receiver, object::address_to_object<Token>(token_addr));
+        
+        // Advance time to ensure timestamp is set
+        timestamp::update_global_time_for_test(1000000); // 1 second in microseconds
+        
+        // Test view functions after staking
+        assert!(nft_staking::get_staked_nfts_count(receiver_addr) == 1, 3);
+        let staked_nfts = nft_staking::get_staked_nfts(receiver_addr);
+        assert!(vector::length(&staked_nfts) == 1, 4);
+        
+        // Verify the NFT info is correct (just check that we have the NFT info structure)
+        let _nft_info = vector::borrow(&staked_nfts, 0);
+        // Note: We can't access struct fields directly from test module, but we can verify the vector contains data
+        
+        // Unstake the token
+        nft_staking::unstake_token(&receiver, creator_addr, collection_obj, string::utf8(b"View Test Token"));
+        
+        // Test view functions after unstaking
+        assert!(nft_staking::get_staked_nfts_count(receiver_addr) == 0, 5);
+        let final_nfts = nft_staking::get_staked_nfts(receiver_addr);
+        assert!(vector::length(&final_nfts) == 0, 6);
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
+    fun test_get_user_accumulated_rewards(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+        framework: signer,
+    ) {
+        let creator_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        
+        // Set up global time for testing
+        timestamp::set_time_has_started_for_testing(&framework);
+        
+        // Create accounts
+        aptos_framework::account::create_account_for_test(creator_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Initialize global registries for testing with creator as admin
+        nft_staking::test_init_registries_with_admin(&token_staking, creator_addr);
+        
+        // Initialize both FA modules
+        banana_a::test_init(&token_staking);
+        banana_b::test_init(&token_staking);
+        let banana_a_metadata = banana_a::get_metadata();
+        let banana_b_metadata = banana_b::get_metadata();
+        banana_a::mint(&token_staking, creator_addr, 1000);
+        banana_b::mint(&token_staking, creator_addr, 1000);
+        
+        // Create collections
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Rewards Test Collection A"),
+            string::utf8(b"Rewards Test Collection A"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Rewards Test Collection B"),
+            string::utf8(b"Rewards Test Collection B"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Get collection objects for operations
+        let collection_a_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Rewards Test Collection A"));
+        let collection_a_obj = object::address_to_object<Collection>(collection_a_addr);
+        let collection_b_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Rewards Test Collection B"));
+        let collection_b_obj = object::address_to_object<Collection>(collection_b_addr);
+        
+        // Add collections to allowed list
+        nft_staking::add_allowed_collection(&creator, collection_a_obj);
+        nft_staking::add_allowed_collection(&creator, collection_b_obj);
+        
+        // Create staking pools with different DPRs and different metadata
+        nft_staking::create_staking(&creator, 20, collection_a_obj, 500, banana_a_metadata, false);
+        nft_staking::create_staking(&creator, 30, collection_b_obj, 300, banana_b_metadata, false);
+        
+        // Create tokens
+        let token_a_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Rewards Test Collection A"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token A"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token_b_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Rewards Test Collection B"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token B"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        let token_a_addr = object::address_from_constructor_ref(&token_a_ref);
+        let token_b_addr = object::address_from_constructor_ref(&token_b_ref);
+        
+        // Transfer tokens to receiver
+        object::transfer(&creator, object::address_to_object<Token>(token_a_addr), receiver_addr);
+        object::transfer(&creator, object::address_to_object<Token>(token_b_addr), receiver_addr);
+        
+        // Initially no rewards for either metadata type
+        let initial_rewards_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let initial_rewards_b = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        assert!(initial_rewards_a == 0, 1);
+        assert!(initial_rewards_b == 0, 2);
+        
+        // Stake both tokens
+        nft_staking::stake_token(&receiver, object::address_to_object<Token>(token_a_addr));
+        nft_staking::stake_token(&receiver, object::address_to_object<Token>(token_b_addr));
+        
+        // Still no rewards immediately after staking
+        let rewards_after_staking_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let rewards_after_staking_b = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        assert!(rewards_after_staking_a == 0, 3);
+        assert!(rewards_after_staking_b == 0, 4);
+        
+        // Advance time by 1 day (86400 seconds)
+        timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
+        
+        // Calculate expected rewards after 1 day:
+        // Collection A (banana_a): 20 DPR * 1 day * 1 token = 20
+        // Collection B (banana_b): 30 DPR * 1 day * 1 token = 30
+        let rewards_after_1_day_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let rewards_after_1_day_b = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        assert!(rewards_after_1_day_a == 20, 5);
+        assert!(rewards_after_1_day_b == 30, 6);
+        
+        // Advance time by another day (cumulative: 2 days total)
+        timestamp::update_global_time_for_test(2 * 86400 * 1000000); // microseconds
+        
+        // After 2 days:
+        // Collection A (banana_a): 20 DPR * 2 days * 1 token = 40
+        // Collection B (banana_b): 30 DPR * 2 days * 1 token = 60
+        let rewards_after_2_days_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let rewards_after_2_days_b = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        assert!(rewards_after_2_days_a == 40, 7);
+        assert!(rewards_after_2_days_b == 60, 8);
+        
+        // Test the helper function to get metadata types
+        let metadata_types = nft_staking::get_user_reward_metadata_types(receiver_addr);
+        assert!(vector::length(&metadata_types) == 2, 9); // Should have both banana_a and banana_b
+        assert!(vector::contains(&metadata_types, &banana_a_metadata), 10);
+        assert!(vector::contains(&metadata_types, &banana_b_metadata), 11);
+        
+        // Claim rewards from Collection A (banana_a)
+        nft_staking::claim_reward(&receiver, collection_a_obj, string::utf8(b"Token A"), creator_addr);
+        
+        // After claiming, banana_a rewards should be reduced, banana_b should be unchanged
+        let rewards_after_claiming_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let rewards_after_claiming_b = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        assert!(rewards_after_claiming_a == 0, 12); // Collection A rewards claimed
+        assert!(rewards_after_claiming_b == 60, 13); // Collection B rewards unchanged
+        
+        // Unstake Collection B token (this resets reward data)
+        nft_staking::unstake_token(&receiver, creator_addr, collection_b_obj, string::utf8(b"Token B"));
+        
+        // After unstaking, rewards are reset to 0 for Collection B
+        let rewards_after_unstaking_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let rewards_after_unstaking_b = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        assert!(rewards_after_unstaking_a == 0, 14); // Collection A still 0
+        assert!(rewards_after_unstaking_b == 0, 15); // Collection B reset to 0 after unstaking
+        
+        // Advance time again - Collection A continues accruing, Collection B doesn't (unstaked)
+        timestamp::update_global_time_for_test(3 * 86400 * 1000000); // microseconds (cumulative: 3 days total)
+        let rewards_after_more_time_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let rewards_after_more_time_b = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        // Collection A: 20 DPR * 3 days * 1 token = 60 total, minus 40 withdrawn = 20 remaining
+        assert!(rewards_after_more_time_a == 20, 16); // Collection A continues accruing
+        assert!(rewards_after_more_time_b == 0, 17); // Collection B still 0 (unstaked)
+        
+        // Test with user who has no staked NFTs
+        let no_stakes_user = @0x999;
+        aptos_framework::account::create_account_for_test(no_stakes_user);
+        let rewards_no_stakes_a = nft_staking::get_user_accumulated_rewards(no_stakes_user, banana_a_metadata);
+        let rewards_no_stakes_b = nft_staking::get_user_accumulated_rewards(no_stakes_user, banana_b_metadata);
+        assert!(rewards_no_stakes_a == 0, 18);
+        assert!(rewards_no_stakes_b == 0, 19);
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
+    fun test_is_staking_enabled_enhanced(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+    ) {
+        let sender_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        
+        // Create accounts
+        aptos_framework::account::create_account_for_test(sender_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Initialize global registries for testing with creator as admin
+        nft_staking::test_init_registries_with_admin(&token_staking, sender_addr);
+        
+        // Initialize FA module
+        banana_a::test_init(&token_staking);
+        let metadata = banana_a::get_metadata();
+        banana_a::mint(&token_staking, sender_addr, 100);
+        
+        // Create collection
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Enhanced Test Collection"),
+            string::utf8(b"Enhanced Test Collection"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Get collection object for operations
+        let collection_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Enhanced Test Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
+        // No staking resources exist yet
         assert!(!nft_staking::is_staking_enabled(sender_addr, collection_obj), 1);
         
         // Add collection to allowed list before creating staking
@@ -546,5 +1383,187 @@ module movement_staking::nft_staking_tests {
         
         // Staking pool re-enabled after deposit
         assert!(nft_staking::is_staking_enabled(sender_addr, collection_obj), 4);
+    }
+
+    #[test(creator = @0xa11ce, token_staking = @movement_staking)]
+    fun test_update_dpr_functionality(
+        creator: signer,
+        token_staking: signer,
+    ) {
+        let sender_addr = signer::address_of(&creator);
+        
+        // Create account
+        aptos_framework::account::create_account_for_test(sender_addr);
+        
+        // Initialize global registries for testing with creator as admin
+        nft_staking::test_init_registries_with_admin(&token_staking, sender_addr);
+        
+        // Initialize FA module
+        banana_a::test_init(&token_staking);
+        let metadata = banana_a::get_metadata();
+        banana_a::mint(&token_staking, sender_addr, 100);
+        
+        // Create collection
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"DPR Test Collection"),
+            string::utf8(b"DPR Test Collection"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Get collection object for operations
+        let collection_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"DPR Test Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
+        // Add collection to allowed list before creating staking
+        nft_staking::add_allowed_collection(&creator, collection_obj);
+        
+        // Create staking pool with initial DPR=20
+        nft_staking::create_staking(&creator, 20, collection_obj, 90, metadata, true);
+        
+        // Update DPR to 30
+        nft_staking::update_dpr(&creator, 30, collection_obj);
+        
+        // Verify the update worked by testing the pool is still active with new settings
+        assert!(nft_staking::is_staking_enabled(sender_addr, collection_obj), 1);
+        
+        // Update DPR again to 15
+        nft_staking::update_dpr(&creator, 15, collection_obj);
+        
+        // Verify the pool is still active
+        assert!(nft_staking::is_staking_enabled(sender_addr, collection_obj), 2);
+    }
+
+    #[test(creator = @0xa11ce, token_staking = @movement_staking)]
+    fun test_deposit_rewards_functionality(
+        creator: signer,
+        token_staking: signer,
+    ) {
+        let sender_addr = signer::address_of(&creator);
+        
+        // Create account
+        aptos_framework::account::create_account_for_test(sender_addr);
+        
+        // Initialize global registries for testing with creator as admin
+        nft_staking::test_init_registries_with_admin(&token_staking, sender_addr);
+        
+        // Initialize FA module
+        banana_a::test_init(&token_staking);
+        let metadata = banana_a::get_metadata();
+        banana_a::mint(&token_staking, sender_addr, 1000);
+        
+        // Create collection
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Rewards Deposit Collection"),
+            string::utf8(b"Rewards Deposit Collection"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Get collection object for operations
+        let collection_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Rewards Deposit Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
+        // Add collection to allowed list before creating staking
+        nft_staking::add_allowed_collection(&creator, collection_obj);
+        
+        // Create staking pool
+        nft_staking::create_staking(&creator, 20, collection_obj, 100, metadata, true);
+        
+        // Verify pool is enabled
+        assert!(nft_staking::is_staking_enabled(sender_addr, collection_obj), 1);
+        
+        // Stop the pool
+        nft_staking::creator_stop_staking(&creator, collection_obj);
+        assert!(!nft_staking::is_staking_enabled(sender_addr, collection_obj), 2);
+        
+        // Deposit more rewards to re-enable
+        nft_staking::deposit_staking_rewards(&creator, collection_obj, 50);
+        
+        // Verify pool is re-enabled after deposit
+        assert!(nft_staking::is_staking_enabled(sender_addr, collection_obj), 3);
+        
+        // Deposit more rewards while pool is active
+        nft_staking::deposit_staking_rewards(&creator, collection_obj, 25);
+        
+        // Verify pool is still enabled
+        assert!(nft_staking::is_staking_enabled(sender_addr, collection_obj), 4);
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
+    fun test_admin_functions(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+    ) {
+        let creator_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        
+        // Create accounts
+        aptos_framework::account::create_account_for_test(creator_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Initialize global registries for testing with creator as admin
+        nft_staking::test_init_registries_with_admin(&token_staking, creator_addr);
+        
+        // Create collections for testing
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Admin Test Collection A"),
+            string::utf8(b"Admin Test Collection A"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Admin Test Collection B"),
+            string::utf8(b"Admin Test Collection B"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Get collection objects for operations
+        let collection_a_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Admin Test Collection A"));
+        let collection_a_obj = object::address_to_object<Collection>(collection_a_addr);
+        let collection_b_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Admin Test Collection B"));
+        let collection_b_obj = object::address_to_object<Collection>(collection_b_addr);
+        
+        // Test initial state - no collections allowed
+        assert!(!nft_staking::is_collection_allowed(collection_a_obj), 1);
+        assert!(!nft_staking::is_collection_allowed(collection_b_obj), 2);
+        
+        // Test adding collections to allowed list (admin function)
+        nft_staking::add_allowed_collection(&creator, collection_a_obj);
+        assert!(nft_staking::is_collection_allowed(collection_a_obj), 3);
+        assert!(!nft_staking::is_collection_allowed(collection_b_obj), 4);
+        
+        // Add second collection
+        nft_staking::add_allowed_collection(&creator, collection_b_obj);
+        assert!(nft_staking::is_collection_allowed(collection_a_obj), 5);
+        assert!(nft_staking::is_collection_allowed(collection_b_obj), 6);
+        
+        // Test removing collections from allowed list (admin function)
+        nft_staking::remove_allowed_collection(&creator, collection_a_obj);
+        assert!(!nft_staking::is_collection_allowed(collection_a_obj), 7);
+        assert!(nft_staking::is_collection_allowed(collection_b_obj), 8);
+        
+        // Remove second collection
+        nft_staking::remove_allowed_collection(&creator, collection_b_obj);
+        assert!(!nft_staking::is_collection_allowed(collection_a_obj), 9);
+        assert!(!nft_staking::is_collection_allowed(collection_b_obj), 10);
+        
+        // Test get_allowed_collections function
+        let allowed_collections = nft_staking::get_allowed_collections();
+        assert!(vector::length(&allowed_collections) == 0, 11);
+        
+        // Add collections back and test get_allowed_collections
+        nft_staking::add_allowed_collection(&creator, collection_a_obj);
+        nft_staking::add_allowed_collection(&creator, collection_b_obj);
+        let allowed_collections = nft_staking::get_allowed_collections();
+        assert!(vector::length(&allowed_collections) == 2, 12);
+        assert!(vector::contains(&allowed_collections, &string::utf8(b"Admin Test Collection A")), 13);
+        assert!(vector::contains(&allowed_collections, &string::utf8(b"Admin Test Collection B")), 14);
     }
 } 
