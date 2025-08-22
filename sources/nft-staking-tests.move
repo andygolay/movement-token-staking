@@ -9,7 +9,7 @@ module movement_staking::nft_staking_tests {
     use aptos_framework::timestamp;
     use aptos_framework::primary_fungible_store;
     
-    use aptos_token_objects::collection;
+    use aptos_token_objects::collection::{Self, Collection};
     use aptos_token_objects::token::{Self, Token};
     use aptos_framework::object;
     
@@ -81,8 +81,12 @@ module movement_staking::nft_staking_tests {
         assert!(nft_staking::is_collection_allowed(string::utf8(b"Allowed Collection")), 3);
         assert!(!nft_staking::is_collection_allowed(string::utf8(b"Disallowed Collection")), 4);
         
+        // Get collection object for staking
+        let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Allowed Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
         // Test that only allowed collection can create staking
-        nft_staking::create_staking(&creator, 10, string::utf8(b"Allowed Collection"), 500, metadata, false);
+        nft_staking::create_staking(&creator, 10, collection_obj, 500, metadata, false);
         
         // Remove collection from allowed list
         nft_staking::remove_allowed_collection(&creator, string::utf8(b"Allowed Collection"));
@@ -119,8 +123,12 @@ module movement_staking::nft_staking_tests {
             string::utf8(b"uri"),
         );
         
+        // Get collection object for staking
+        let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Disallowed Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
         // Try to create staking for disallowed collection - should fail
-        nft_staking::create_staking(&creator, 10, string::utf8(b"Disallowed Collection"), 500, metadata, false);
+        nft_staking::create_staking(&creator, 10, collection_obj, 500, metadata, false);
     }
     
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
@@ -230,8 +238,12 @@ module movement_staking::nft_staking_tests {
         // Add collection to allowed list
         nft_staking::add_allowed_collection(&creator, string::utf8(b"Freeze Test Collection"));
         
+        // Get collection object for staking
+        let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Freeze Test Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
         // Create staking pool with freezing enabled
-        nft_staking::create_staking(&creator, 10, string::utf8(b"Freeze Test Collection"), 500, metadata, true);
+        nft_staking::create_staking(&creator, 10, collection_obj, 500, metadata, true);
         
         // Create and transfer token to receiver
         let token_ref = token::create_named_token(

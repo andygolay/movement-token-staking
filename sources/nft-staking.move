@@ -12,7 +12,7 @@ module movement_staking::nft_staking
     use aptos_framework::primary_fungible_store;
     use aptos_framework::object::{Self as object, Object};
     use aptos_framework::timestamp;
-    use aptos_token_objects::collection::Self;
+    use aptos_token_objects::collection::{Self, Collection};
     use aptos_token_objects::token::{Self, Token};
     #[test_only]
     use movement_staking::banana_a;
@@ -121,15 +121,15 @@ module movement_staking::nft_staking
     public entry fun create_staking(
         creator: &signer,
         dpr: u64,//rate of payment,
-        collection_name: String, //the name of the collection owned by Creator 
+        collection_obj: Object<Collection>,
         total_amount: u64,
         metadata: Object<fungible_asset::Metadata>,
         // Whether or not to lock the reward tokens earned in the user's account 
         is_locked: bool,
     ) acquires ResourceInfo, AllowedCollectionsRegistry {
-        let creator_addr = signer::address_of(creator);
         //verify the creator has the collection (DA standard)
-        let collection_addr = collection::create_collection_address(&creator_addr, &collection_name);
+        let collection_name = collection::name(collection_obj);
+        let collection_addr = object::object_address(&collection_obj);
         assert!(object::is_object(collection_addr), ENO_NO_COLLECTION);
         
         // Check if collection is allowed for staking
@@ -745,10 +745,14 @@ module movement_staking::nft_staking
         // Add collection to allowed list before creating staking
         add_allowed_collection(&creator, string::utf8(b"Movement Collection"));
         
+        // Get collection object for staking
+        let collection_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Movement Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
         create_staking(
             &creator,
             20,
-            string::utf8(b"Movement Collection"),
+            collection_obj,
             90,
             metadata,
             true);
@@ -825,8 +829,12 @@ module movement_staking::nft_staking
         let token_addr = object::address_from_constructor_ref(&token_ref);
         object::transfer(&creator, object::address_to_object<Token>(token_addr), receiver_addr);
         
+        // Get collection object for staking
+        let collection_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Movement Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
         // Create staking pool with dpr=20
-        create_staking(&creator, 20, string::utf8(b"Movement Collection"), 90, metadata, true);
+        create_staking(&creator, 20, collection_obj, 90, metadata, true);
         
         // Stake the token
         stake_token(&receiver, object::address_to_object<Token>(token_addr));
@@ -922,8 +930,12 @@ module movement_staking::nft_staking
         let token_addr = object::address_from_constructor_ref(&token_ref);
         object::transfer(&creator, object::address_to_object<Token>(token_addr), receiver_addr);
         
+        // Get collection object for staking
+        let collection_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Freezing Disabled Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
         // Create staking pool with dpr=20 and freezing DISABLED (is_locked = false)
-        create_staking(&creator, 20, string::utf8(b"Freezing Disabled Collection"), 90, metadata, false);
+        create_staking(&creator, 20, collection_obj, 90, metadata, false);
         
         // Stake the token
         stake_token(&receiver, object::address_to_object<Token>(token_addr));
@@ -1016,8 +1028,13 @@ module movement_staking::nft_staking
         );
         let token_addr = object::address_from_constructor_ref(&token_ref);
         object::transfer(&creator, object::address_to_object<Token>(token_addr), receiver_addr);
+        
+        // Get collection object for staking
+        let collection_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Test Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
         // Pool then stop
-        create_staking(&creator, 10, string::utf8(b"Test Collection"), 90, metadata, true);
+        create_staking(&creator, 10, collection_obj, 90, metadata, true);
         creator_stop_staking(&creator, string::utf8(b"Test Collection"));
         // Attempt stake (should abort with ENO_STOPPED=4)
         stake_token(&receiver, object::address_to_object<Token>(token_addr));
@@ -1067,8 +1084,12 @@ module movement_staking::nft_staking
         // Add collection to allowed list before creating staking
         add_allowed_collection(&creator, string::utf8(b"Test Collection"));
         
+        // Get collection object for staking
+        let collection_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Test Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
         // Create staking pool
-        create_staking(&creator, 20, string::utf8(b"Test Collection"), 90, metadata, true);
+        create_staking(&creator, 20, collection_obj, 90, metadata, true);
         
         // Staking pool exists and is enabled by default
         assert!(is_staking_enabled(sender_addr, string::utf8(b"Test Collection")), 3);
@@ -1169,9 +1190,15 @@ module movement_staking::nft_staking
         object::transfer(&creator, object::address_to_object<Token>(token_a_addr), receiver_addr);
         object::transfer(&creator, object::address_to_object<Token>(token_b_addr), receiver_addr);
         
+        // Get collection objects for staking
+        let collection_a_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Test Collection A"));
+        let collection_a_obj = object::address_to_object<Collection>(collection_a_addr);
+        let collection_b_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Test Collection B"));
+        let collection_b_obj = object::address_to_object<Collection>(collection_b_addr);
+        
         // Create staking pools for both FAs (different collections to avoid resource account conflicts)
-        create_staking(&creator, 20, string::utf8(b"Test Collection A"), 500, banana_a_metadata, true);
-        create_staking(&creator, 15, string::utf8(b"Test Collection B"), 300, banana_b_metadata, true);
+        create_staking(&creator, 20, collection_a_obj, 500, banana_a_metadata, true);
+        create_staking(&creator, 15, collection_b_obj, 300, banana_b_metadata, true);
         
         // Stake both tokens
         stake_token(&receiver, object::address_to_object<Token>(token_a_addr));
@@ -1286,9 +1313,15 @@ module movement_staking::nft_staking
         object::transfer(&creator, object::address_to_object<Token>(token_a_addr), receiver_addr);
         object::transfer(&creator, object::address_to_object<Token>(token_b_addr), receiver_addr);
         
+        // Get collection objects for staking
+        let collection_c_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Test Collection C"));
+        let collection_c_obj = object::address_to_object<Collection>(collection_c_addr);
+        let collection_d_addr = collection::create_collection_address(&sender_addr, &string::utf8(b"Test Collection D"));
+        let collection_d_obj = object::address_to_object<Collection>(collection_d_addr);
+        
         // Create staking pools for both FAs with freezing DISABLED (is_locked = false)
-        create_staking(&creator, 20, string::utf8(b"Test Collection C"), 500, banana_a_metadata, false);
-        create_staking(&creator, 15, string::utf8(b"Test Collection D"), 300, banana_b_metadata, false);
+        create_staking(&creator, 20, collection_c_obj, 500, banana_a_metadata, false);
+        create_staking(&creator, 15, collection_d_obj, 300, banana_b_metadata, false);
         
         // Stake both tokens
         stake_token(&receiver, object::address_to_object<Token>(token_a_addr));
@@ -1401,8 +1434,12 @@ module movement_staking::nft_staking
         object::transfer(&creator, object::address_to_object<Token>(token2_addr), user1_addr);
         object::transfer(&creator, object::address_to_object<Token>(token3_addr), user2_addr);
         
+        // Get collection object for staking
+        let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Registry Test Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
         // Create staking pool
-        create_staking(&creator, 10, string::utf8(b"Registry Test Collection"), 500, metadata, false);
+        create_staking(&creator, 10, collection_obj, 500, metadata, false);
         
         // Verify registry is initially empty
         let registry = borrow_global<StakedNFTsRegistry>(@movement_staking);
@@ -1548,8 +1585,12 @@ module movement_staking::nft_staking
         object::transfer(&creator, object::address_to_object<Token>(token2_addr), user1_addr);
         object::transfer(&creator, object::address_to_object<Token>(token3_addr), user1_addr);
         
+        // Get collection object for staking
+        let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Batch Test Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
         // Create staking pool
-        create_staking(&creator, 10, string::utf8(b"Batch Test Collection"), 500, metadata, false);
+        create_staking(&creator, 10, collection_obj, 500, metadata, false);
         
         // Verify registry is initially empty
         let registry = borrow_global<StakedNFTsRegistry>(@movement_staking);
@@ -1693,8 +1734,12 @@ module movement_staking::nft_staking
         // Transfer token to receiver
         object::transfer(&creator, object::address_to_object<Token>(token_addr), receiver_addr);
         
+        // Get collection object for staking
+        let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"View Test Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
         // Create staking pool
-        create_staking(&creator, 10, string::utf8(b"View Test Collection"), 500, metadata, false);
+        create_staking(&creator, 10, collection_obj, 500, metadata, false);
         
         // Test view functions before staking
         assert!(get_staked_nfts_count(receiver_addr) == 0, 1);
@@ -1780,8 +1825,12 @@ module movement_staking::nft_staking
         assert!(is_collection_allowed(string::utf8(b"Allowed Collection")), 3);
         assert!(!is_collection_allowed(string::utf8(b"Disallowed Collection")), 4);
         
+        // Get collection object for staking
+        let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Allowed Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
         // Test that only allowed collection can create staking
-        create_staking(&creator, 10, string::utf8(b"Allowed Collection"), 500, metadata, false);
+        create_staking(&creator, 10, collection_obj, 500, metadata, false);
         
         // Remove collection from allowed list
         remove_allowed_collection(&creator, string::utf8(b"Allowed Collection"));
@@ -1823,8 +1872,12 @@ module movement_staking::nft_staking
             string::utf8(b"uri"),
         );
         
+        // Get collection object for staking
+        let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Disallowed Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
         // Try to create staking for disallowed collection - should fail
-        create_staking(&creator, 10, string::utf8(b"Disallowed Collection"), 500, metadata, false);
+        create_staking(&creator, 10, collection_obj, 500, metadata, false);
     }
 
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, _framework = @0x1)]
@@ -1959,9 +2012,15 @@ module movement_staking::nft_staking
         add_allowed_collection(&creator, string::utf8(b"Rewards Test Collection A"));
         add_allowed_collection(&creator, string::utf8(b"Rewards Test Collection B"));
         
+        // Get collection objects for staking
+        let collection_a_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Rewards Test Collection A"));
+        let collection_a_obj = object::address_to_object<Collection>(collection_a_addr);
+        let collection_b_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Rewards Test Collection B"));
+        let collection_b_obj = object::address_to_object<Collection>(collection_b_addr);
+        
         // Create staking pools with different DPRs and different metadata
-        create_staking(&creator, 20, string::utf8(b"Rewards Test Collection A"), 500, banana_a_metadata, false);
-        create_staking(&creator, 30, string::utf8(b"Rewards Test Collection B"), 300, banana_b_metadata, false);
+        create_staking(&creator, 20, collection_a_obj, 500, banana_a_metadata, false);
+        create_staking(&creator, 30, collection_b_obj, 300, banana_b_metadata, false);
         
         // Create tokens
         let token_a_ref = token::create_named_token(
