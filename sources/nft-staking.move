@@ -70,7 +70,7 @@ module movement_staking::nft_staking
 
     // Registry of allowed collection IDs for staking
     struct AllowedCollectionsRegistry has key {
-        allowed_collections: SmartTable<String, bool>,
+        allowed_collections: SmartTable<address, bool>, // collection_addr -> true/false
         admin: address,
     }
 
@@ -141,7 +141,7 @@ module movement_staking::nft_staking
         
         // Check if collection is allowed for staking
         let allowed_collections = borrow_global<AllowedCollectionsRegistry>(@movement_staking);
-        assert!(smart_table::contains(&allowed_collections.allowed_collections, collection_name), ENO_COLLECTION_NOT_ALLOWED);
+        assert!(smart_table::contains(&allowed_collections.allowed_collections, collection_addr), ENO_COLLECTION_NOT_ALLOWED);
         //
         let (staking_treasury, staking_treasury_cap) = account::create_resource_account(creator, to_bytes(&collection_name)); //resource account to store funds and data
         let staking_treasury_signer_from_cap = account::create_signer_with_capability(&staking_treasury_cap);
@@ -245,12 +245,12 @@ module movement_staking::nft_staking
         collection_obj: Object<Collection>,
     ) acquires AllowedCollectionsRegistry {
         let admin_addr = signer::address_of(admin);
-        let collection_name = collection::name(collection_obj);
+        let collection_addr = object::object_address(&collection_obj);
         let allowed_collections = borrow_global_mut<AllowedCollectionsRegistry>(@movement_staking);
         assert!(allowed_collections.admin == admin_addr, ENO_NOT_ADMIN);
         
-        if (!smart_table::contains(&allowed_collections.allowed_collections, collection_name)) {
-            smart_table::add(&mut allowed_collections.allowed_collections, collection_name, true);
+        if (!smart_table::contains(&allowed_collections.allowed_collections, collection_addr)) {
+            smart_table::add(&mut allowed_collections.allowed_collections, collection_addr, true);
         };
     }
 
@@ -260,30 +260,30 @@ module movement_staking::nft_staking
         collection_obj: Object<Collection>,
     ) acquires AllowedCollectionsRegistry {
         let admin_addr = signer::address_of(admin);
-        let collection_name = collection::name(collection_obj);
+        let collection_addr = object::object_address(&collection_obj);
         let allowed_collections = borrow_global_mut<AllowedCollectionsRegistry>(@movement_staking);
         assert!(allowed_collections.admin == admin_addr, ENO_NOT_ADMIN);
         
-        if (smart_table::contains(&allowed_collections.allowed_collections, collection_name)) {
-            smart_table::remove(&mut allowed_collections.allowed_collections, collection_name);
+        if (smart_table::contains(&allowed_collections.allowed_collections, collection_addr)) {
+            smart_table::remove(&mut allowed_collections.allowed_collections, collection_addr);
         };
     }
 
     #[view]
     /// Checks if a collection is allowed for staking
     public fun is_collection_allowed(collection_obj: Object<Collection>): bool acquires AllowedCollectionsRegistry {
-        let collection_name = collection::name(collection_obj);
+        let collection_addr = object::object_address(&collection_obj);
         let allowed_collections = borrow_global<AllowedCollectionsRegistry>(@movement_staking);
-        smart_table::contains(&allowed_collections.allowed_collections, collection_name)
+        smart_table::contains(&allowed_collections.allowed_collections, collection_addr)
     }
 
     #[view]
-    /// Returns all allowed collections for staking
-    public fun get_allowed_collections(): vector<String> acquires AllowedCollectionsRegistry {
+    /// Returns all allowed collection addresses for staking
+    public fun get_allowed_collections(): vector<address> acquires AllowedCollectionsRegistry {
         let allowed_collections = borrow_global<AllowedCollectionsRegistry>(@movement_staking);
-        let result = vector::empty<String>();
+        let result = vector::empty<address>();
         
-        // Iterate through the smart table and collect all allowed collection names
+        // Iterate through the smart table and collect all allowed collection addresses
         let keys = smart_table::keys(&allowed_collections.allowed_collections);
         let i = 0;
         let len = vector::length(&keys);

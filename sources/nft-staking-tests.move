@@ -222,24 +222,24 @@ module movement_staking::nft_staking_tests {
         nft_staking::add_allowed_collection(&creator, collection_a_obj);
         let allowed_collections = nft_staking::get_allowed_collections();
         assert!(vector::length(&allowed_collections) == 1, 2);
-        assert!(vector::contains(&allowed_collections, &string::utf8(b"Collection A")), 3);
+        assert!(vector::contains(&allowed_collections, &collection_a_addr), 3);
         
         // Add multiple collections
         nft_staking::add_allowed_collection(&creator, collection_b_obj);
         nft_staking::add_allowed_collection(&creator, collection_c_obj);
         let allowed_collections = nft_staking::get_allowed_collections();
         assert!(vector::length(&allowed_collections) == 3, 4);
-        assert!(vector::contains(&allowed_collections, &string::utf8(b"Collection A")), 5);
-        assert!(vector::contains(&allowed_collections, &string::utf8(b"Collection B")), 6);
-        assert!(vector::contains(&allowed_collections, &string::utf8(b"Collection C")), 7);
+        assert!(vector::contains(&allowed_collections, &collection_a_addr), 5);
+        assert!(vector::contains(&allowed_collections, &collection_b_addr), 6);
+        assert!(vector::contains(&allowed_collections, &collection_c_addr), 7);
         
         // Remove a collection
         nft_staking::remove_allowed_collection(&creator, collection_b_obj);
         let allowed_collections = nft_staking::get_allowed_collections();
         assert!(vector::length(&allowed_collections) == 2, 8);
-        assert!(vector::contains(&allowed_collections, &string::utf8(b"Collection A")), 9);
-        assert!(!vector::contains(&allowed_collections, &string::utf8(b"Collection B")), 10);
-        assert!(vector::contains(&allowed_collections, &string::utf8(b"Collection C")), 11);
+        assert!(vector::contains(&allowed_collections, &collection_a_addr), 9);
+        assert!(!vector::contains(&allowed_collections, &collection_b_addr), 10);
+        assert!(vector::contains(&allowed_collections, &collection_c_addr), 11);
         
         // Remove all collections
         nft_staking::remove_allowed_collection(&creator, collection_a_obj);
@@ -1560,8 +1560,8 @@ module movement_staking::nft_staking_tests {
         nft_staking::add_allowed_collection(&creator, collection_b_obj);
         let allowed_collections = nft_staking::get_allowed_collections();
         assert!(vector::length(&allowed_collections) == 2, 12);
-        assert!(vector::contains(&allowed_collections, &string::utf8(b"Admin Test Collection A")), 13);
-        assert!(vector::contains(&allowed_collections, &string::utf8(b"Admin Test Collection B")), 14);
+        assert!(vector::contains(&allowed_collections, &collection_a_addr), 13);
+        assert!(vector::contains(&allowed_collections, &collection_b_addr), 14);
     }
 
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
