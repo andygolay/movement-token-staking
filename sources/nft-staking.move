@@ -4,7 +4,7 @@
 module movement_staking::nft_staking
 {
     use std::signer;
-    use std::string::{String, append};
+
     use std::vector;
 
     use aptos_framework::account;
@@ -12,7 +12,7 @@ module movement_staking::nft_staking
     use aptos_framework::primary_fungible_store;
     use aptos_framework::object::{Self as object, Object};
     use aptos_framework::timestamp;
-    use aptos_token_objects::collection::{Self, Collection};
+    use aptos_token_objects::collection::Collection;
     use aptos_token_objects::token::{Self, Token};
 
     use movement_staking::freeze_registry;
@@ -22,7 +22,7 @@ module movement_staking::nft_staking
 
     // Staking resource for collection
     struct MovementStaking has key {
-        collection: String,
+        collection: address,
         // amount of token paid in a week for staking one token,
         // changed to dpr (daily percentage return)in place of apr addressing demand
         dpr: u64,
@@ -42,10 +42,8 @@ module movement_staking::nft_staking
     struct MovementReward has drop, key {
         //staker
         staker: address,
-        //token_name
-        token_name: String,
-        //name of the collection
-        collection: String,
+        //address of the collection
+        collection: address,
         // staked token address
         token_address: address,
         //withdrawn amount
@@ -58,9 +56,14 @@ module movement_staking::nft_staking
         tokens: u64,
     }
 
-    // Resource info for mapping collection name to staking address
+    // Resource info for mapping collection address to staking address
     struct ResourceInfo has key {
-        resource_map: SimpleMap< String, address>,
+        resource_map: SimpleMap<address, address>,
+    }
+
+    // Resource info for mapping seed (collection + token) to reward treasury address
+    struct SeedResourceInfo has key {
+        seed_resource_map: SimpleMap<vector<u8>, address>,
     }
 
     // Registry to track staked NFTs per user
@@ -82,8 +85,8 @@ module movement_staking::nft_staking
     // Info about each staked NFT
     struct StakedNFTInfo has store, drop, copy {
         nft_object_address: address,
-        collection_name: String,
-        token_name: String,
+        collection_addr: address,
+        token_addr: address,
         staked_at: u64,
     }
 
@@ -135,7 +138,6 @@ module movement_staking::nft_staking
         is_locked: bool,
     ) acquires ResourceInfo, AllowedCollectionsRegistry, StakingPoolsRegistry {
         //verify the creator has the collection (DA standard)
-        let collection_name = collection::name(collection_obj);
         let collection_addr = object::object_address(&collection_obj);
         assert!(object::is_object(collection_addr), ENO_NO_COLLECTION);
         
@@ -143,15 +145,15 @@ module movement_staking::nft_staking
         let allowed_collections = borrow_global<AllowedCollectionsRegistry>(@movement_staking);
         assert!(smart_table::contains(&allowed_collections.allowed_collections, collection_addr), ENO_COLLECTION_NOT_ALLOWED);
         //
-        let (staking_treasury, staking_treasury_cap) = account::create_resource_account(creator, to_bytes(&collection_name)); //resource account to store funds and data
+        let (staking_treasury, staking_treasury_cap) = account::create_resource_account(creator, to_bytes(&collection_addr)); //resource account to store funds and data
         let staking_treasury_signer_from_cap = account::create_signer_with_capability(&staking_treasury_cap);
         let staking_address = signer::address_of(&staking_treasury);
         assert!(!exists<MovementStaking>(staking_address), ENO_STAKING_EXISTS);
-        create_add_resource_info(creator, collection_name, staking_address);
+        create_add_resource_info(creator, collection_addr, staking_address);
         // the creator needs to transfer FA into the staking treasury
         primary_fungible_store::transfer(creator, metadata, staking_address, total_amount);
         move_to<MovementStaking>(&staking_treasury_signer_from_cap, MovementStaking{
-        collection: collection_name,
+        collection: collection_addr,
         dpr: dpr,
         state: true,
         amount: total_amount,
@@ -173,8 +175,8 @@ module movement_staking::nft_staking
     ) acquires MovementStaking, ResourceInfo {
         let creator_addr = signer::address_of(creator);
         //verify the creator has the collection
-        let collection_name = collection::name(collection_obj);
-        let staking_address = get_resource_address(creator_addr, collection_name);
+        let collection_addr = object::object_address(&collection_obj);
+        let staking_address = get_resource_address(creator_addr, collection_addr);
         assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         staking_data.dpr = dpr;
@@ -189,8 +191,8 @@ module movement_staking::nft_staking
     ) acquires MovementStaking, ResourceInfo {
         let creator_addr = signer::address_of(creator);
         //get staking address
-        let collection_name = collection::name(collection_obj);
-        let staking_address = get_resource_address(creator_addr, collection_name);
+        let collection_addr = object::object_address(&collection_obj);
+        let staking_address = get_resource_address(creator_addr, collection_addr);
         assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         staking_data.state = false;
@@ -207,8 +209,8 @@ module movement_staking::nft_staking
         let creator_addr = signer::address_of(creator);
         //verify the creator has the collection
          assert!(exists<ResourceInfo>(creator_addr), ENO_NO_STAKING);
-        let collection_name = collection::name(collection_obj);
-        let staking_address = get_resource_address(creator_addr, collection_name);
+        let collection_addr = object::object_address(&collection_obj);
+        let staking_address = get_resource_address(creator_addr, collection_addr);
         assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists       
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         // Transfer FA from creator to staking treasury store
@@ -228,8 +230,8 @@ module movement_staking::nft_staking
         let creator_addr = signer::address_of(creator);
         // Verify the creator has the collection
         assert!(exists<ResourceInfo>(creator_addr), ENO_NO_STAKING);
-        let collection_name = collection::name(collection_obj);
-        let staking_address = get_resource_address(creator_addr, collection_name);
+        let collection_addr = object::object_address(&collection_obj);
+        let staking_address = get_resource_address(creator_addr, collection_addr);
         assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);
         
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
@@ -299,7 +301,7 @@ module movement_staking::nft_staking
 
     #[view]
     /// Returns accumulated rewards for a user for a specific fungible asset metadata
-    public fun get_user_accumulated_rewards(user_address: address, metadata: Object<fungible_asset::Metadata>): u64 acquires StakedNFTsRegistry, MovementReward, MovementStaking, ResourceInfo {
+    public fun get_user_accumulated_rewards(user_address: address, metadata: Object<fungible_asset::Metadata>): u64 acquires StakedNFTsRegistry, MovementReward, MovementStaking, ResourceInfo, SeedResourceInfo {
         // Check if user has any staked NFTs
         let registry = borrow_global<StakedNFTsRegistry>(@movement_staking);
         if (!smart_table::contains(&registry.staked_nfts, user_address)) {
@@ -314,21 +316,27 @@ module movement_staking::nft_staking
         while (i < len) {
             let nft_info = vector::borrow(staked_nfts, i);
             
-            // Calculate seed for the reward treasury
-            let seed = nft_info.collection_name;
-            let seed2 = nft_info.token_name;
-            append(&mut seed, seed2);
+            // Calculate seed for the reward treasury using collection address + token address
+            // This must match the seed generation in stake_token
+            let seed = to_bytes(&nft_info.collection_addr);
+            let seed2 = to_bytes(&nft_info.token_addr);
+            // Concatenate the byte vectors
+            let combined_seed = vector::empty<u8>();
+            vector::append(&mut combined_seed, seed);
+            vector::append(&mut combined_seed, seed2);
             
-            // Get the reward treasury address
-            let reward_treasury_address = get_resource_address(user_address, seed);
-            
-            // Check if reward data exists and calculate rewards
-            if (exists<MovementReward>(reward_treasury_address)) {
+            // Check if the seed exists in the registry before trying to get the resource address
+            if (check_map_by_seed(user_address, combined_seed)) {
+                // Get the reward treasury address
+                let reward_treasury_address = get_resource_address_by_seed(user_address, combined_seed);
+                
+                // Check if reward data exists and calculate rewards
+                if (exists<MovementReward>(reward_treasury_address)) {
                 let reward_data = borrow_global<MovementReward>(reward_treasury_address);
                 
                 // Get staking pool data to get the daily percentage return
                 let creator_addr = token::creator(object::address_to_object<Token>(nft_info.nft_object_address));
-                let staking_address = get_resource_address(creator_addr, nft_info.collection_name);
+                let staking_address = get_resource_address(creator_addr, nft_info.collection_addr);
                 
                 if (exists<MovementStaking>(staking_address)) {
                     let staking_data = borrow_global<MovementStaking>(staking_address);
@@ -351,6 +359,7 @@ module movement_staking::nft_staking
                         total_rewards = total_rewards + net_rewards;
                     };
                 };
+            };
             };
             
             i = i + 1;
@@ -378,7 +387,7 @@ module movement_staking::nft_staking
             
             // Get staking pool data to get the metadata
             let creator_addr = token::creator(object::address_to_object<Token>(nft_info.nft_object_address));
-            let staking_address = get_resource_address(creator_addr, nft_info.collection_name);
+            let staking_address = get_resource_address(creator_addr, nft_info.collection_addr);
             
             if (exists<MovementStaking>(staking_address)) {
                 let staking_data = borrow_global<MovementStaking>(staking_address);
@@ -462,30 +471,33 @@ module movement_staking::nft_staking
     public entry fun stake_token(
         staker: &signer,
         nft: Object<Token>,
-    ) acquires MovementStaking, ResourceInfo, MovementReward, StakedNFTsRegistry {
+    ) acquires MovementStaking, ResourceInfo, MovementReward, StakedNFTsRegistry, SeedResourceInfo {
         let staker_addr = signer::address_of(staker);
         // verify ownership of the token
         assert!(object::owner(nft) == staker_addr, ENO_NO_TOKEN_IN_TOKEN_STORE);
-        // derive creator and collection name from token (DA standard)
+        // derive creator from token (DA standard)
         let creator_addr = token::creator(nft);
-        let collection_name = token::collection_name(nft);
-        // verify the collection exists
-        let collection_addr = collection::create_collection_address(&creator_addr, &collection_name);
+        // verify the collection exists by getting the collection address directly
+        let collection_addr = token::collection_object(nft);
+        let collection_addr = object::object_address(&collection_addr);
         assert!(object::is_object(collection_addr), ENO_NO_COLLECTION);
         // staking pool
-        let staking_address = get_resource_address(creator_addr, collection_name);
+        let staking_address = get_resource_address(creator_addr, collection_addr);
         assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);
         let staking_data = borrow_global<MovementStaking>(staking_address);
         assert!(staking_data.state, ENO_STOPPED);
-        // seed for reward vault mapping: collection + token name
-        let token_name = token::name(nft);
-        let seed = collection_name;
-        let seed2 = token_name;
-        append(&mut seed, seed2);
+        // seed for reward vault mapping: collection address + token address
+        let token_addr = object::object_address(&nft);
+        let seed = to_bytes(&collection_addr);
+        let seed2 = to_bytes(&token_addr);
+        // Concatenate the byte vectors
+        let combined_seed = vector::empty<u8>();
+        vector::append(&mut combined_seed, seed);
+        vector::append(&mut combined_seed, seed2);
         //allowing restaking
-        let should_pass_restake = check_map(staker_addr, seed);
+        let should_pass_restake = check_map_by_seed(staker_addr, combined_seed);
         if (should_pass_restake) {
-            let reward_treasury_address = get_resource_address(staker_addr, seed);
+            let reward_treasury_address = get_resource_address_by_seed(staker_addr, combined_seed);
             assert!(exists<MovementReward>(reward_treasury_address), ENO_STAKING_EXISTS);
             let reward_data = borrow_global_mut<MovementReward>(reward_treasury_address);
             let now = aptos_framework::timestamp::now_seconds();
@@ -496,18 +508,17 @@ module movement_staking::nft_staking
             object::transfer(staker, nft, reward_treasury_address);
 
         } else {
-            let (reward_treasury, reward_treasury_cap) = account::create_resource_account(staker, to_bytes(&seed)); //resource account to store funds and data
+            let (reward_treasury, reward_treasury_cap) = account::create_resource_account(staker, combined_seed); //resource account to store funds and data
             let reward_treasury_signer_from_cap = account::create_signer_with_capability(&reward_treasury_cap);
             let reward_treasury_address = signer::address_of(&reward_treasury);
             assert!(!exists<MovementReward>(reward_treasury_address), ENO_STAKING_EXISTS);
-            create_add_resource_info(staker, seed, reward_treasury_address);
+            create_add_resource_info_by_seed(staker, combined_seed, reward_treasury_address);
             let now = aptos_framework::timestamp::now_seconds();
             let token_addr = object::object_address(&nft);
             object::transfer(staker, nft, reward_treasury_address);
             move_to<MovementReward>(&reward_treasury_signer_from_cap , MovementReward{
             staker: staker_addr,
-            token_name: token::name(object::address_to_object<Token>(token_addr)),
-            collection: token::collection_name(object::address_to_object<Token>(token_addr)),
+            collection: collection_addr,
             token_address: token_addr,
             withdraw_amount: 0,
             treasury_cap: reward_treasury_cap,
@@ -518,9 +529,9 @@ module movement_staking::nft_staking
 
         // Register the staked NFT
         let staked_nft_info = StakedNFTInfo {
-            nft_object_address: object::object_address(&nft),
-            collection_name: collection_name,
-            token_name: token_name,
+            nft_object_address: token_addr,
+            collection_addr: collection_addr,
+            token_addr: token_addr,
             staked_at: aptos_framework::timestamp::now_seconds(),
         };
         
@@ -540,7 +551,7 @@ module movement_staking::nft_staking
     public entry fun batch_stake_tokens(
         staker: &signer,
         nfts: vector<Object<Token>>,
-    ) acquires StakedNFTsRegistry, MovementStaking, ResourceInfo {
+    ) acquires StakedNFTsRegistry, MovementStaking, ResourceInfo, SeedResourceInfo {
         let staker_addr = signer::address_of(staker);
         let nft_count = vector::length(&nfts);
         
@@ -565,37 +576,39 @@ module movement_staking::nft_staking
             
             // Get NFT metadata
             let creator_addr = token::creator(nft);
-            let collection_name = token::collection_name(nft);
-            let token_name = token::name(nft);
             
-            // Validate collection exists
-            let collection_addr = collection::create_collection_address(&creator_addr, &collection_name);
+            // Validate collection exists  
+            let collection_addr = token::collection_object(nft);
+            let collection_addr = object::object_address(&collection_addr);
             assert!(object::is_object(collection_addr), ENO_NO_COLLECTION);
             
             // Validate staking pool exists
-            let staking_address = get_resource_address(creator_addr, collection_name);
+            let staking_address = get_resource_address(creator_addr, collection_addr);
             assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);
             let staking_data = borrow_global<MovementStaking>(staking_address);
             assert!(staking_data.state, ENO_STOPPED);
             
-            // Create seed for reward vault
-            let seed = collection_name;
-            let seed2 = token_name;
-            append(&mut seed, seed2);
+            // Create seed for reward vault using collection address + token address
+            let token_addr = object::object_address(&nft);
+            let seed = to_bytes(&collection_addr);
+            let seed2 = to_bytes(&token_addr);
+            // Concatenate the byte vectors
+            let combined_seed = vector::empty<u8>();
+            vector::append(&mut combined_seed, seed);
+            vector::append(&mut combined_seed, seed2);
             
             // Create reward treasury for this token
-            let (reward_treasury, reward_treasury_cap) = account::create_resource_account(staker, to_bytes(&seed));
+            let (reward_treasury, reward_treasury_cap) = account::create_resource_account(staker, combined_seed);
             let reward_treasury_signer_from_cap = account::create_signer_with_capability(&reward_treasury_cap);
             let reward_treasury_address = signer::address_of(&reward_treasury);
             assert!(!exists<MovementReward>(reward_treasury_address), ENO_STAKING_EXISTS);
-            create_add_resource_info(staker, seed, reward_treasury_address);
+            create_add_resource_info_by_seed(staker, combined_seed, reward_treasury_address);
             let now = timestamp::now_seconds();
             let token_addr = object::object_address(&nft);
             object::transfer(staker, nft, reward_treasury_address);
             move_to<MovementReward>(&reward_treasury_signer_from_cap, MovementReward {
                 staker: staker_addr,
-                token_name: token::name(object::address_to_object<Token>(token_addr)),
-                collection: token::collection_name(object::address_to_object<Token>(token_addr)),
+                collection: collection_addr,
                 token_address: token_addr,
                 withdraw_amount: 0,
                 treasury_cap: reward_treasury_cap,
@@ -605,9 +618,9 @@ module movement_staking::nft_staking
             
             // Add to registry
             let staked_nft_info = StakedNFTInfo {
-                nft_object_address: object::object_address(&nft),
-                collection_name,
-                token_name,
+                nft_object_address: token_addr,
+                collection_addr,
+                token_addr: token_addr,
                 staked_at: timestamp::now_seconds(),
             };
             
@@ -629,21 +642,26 @@ module movement_staking::nft_staking
     public entry fun claim_reward(
         staker: &signer, 
         collection_obj: Object<Collection>, //the collection object owned by Creator 
-        token_name: String,
+        token_obj: Object<Token>,
         creator: address,
-    ) acquires MovementStaking, MovementReward, ResourceInfo {
+    ) acquires MovementStaking, MovementReward, ResourceInfo, SeedResourceInfo {
         let staker_addr = signer::address_of(staker);
         //verifying whether the creator has started the staking or not
-        let collection_name = collection::name(collection_obj);
-        let staking_address = get_resource_address(creator, collection_name);
+        let collection_addr = object::object_address(&collection_obj);
+        let staking_address = get_resource_address(creator, collection_addr);
         assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         let staking_treasury_signer_from_cap = account::create_signer_with_capability(&staking_data.treasury_cap);
         assert!(staking_data.state, ENO_STOPPED);
-        let seed = collection_name;
-        let seed2 = token_name;
-        append(&mut seed, seed2);
-        let reward_treasury_address = get_resource_address(staker_addr, seed);
+        // Generate seed using collection address + token address
+        let token_addr = object::object_address(&token_obj);
+        let seed = to_bytes(&collection_addr);
+        let seed2 = to_bytes(&token_addr);
+        // Concatenate the byte vectors
+        let combined_seed = vector::empty<u8>();
+        vector::append(&mut combined_seed, seed);
+        vector::append(&mut combined_seed, seed2);
+        let reward_treasury_address = get_resource_address_by_seed(staker_addr, combined_seed);
         assert!(exists<MovementReward>(reward_treasury_address), ENO_STAKING_EXISTS);
         let reward_data = borrow_global_mut<MovementReward>(reward_treasury_address);
         assert!(reward_data.staker==staker_addr, ENO_STAKER_MISMATCH);
@@ -672,21 +690,26 @@ module movement_staking::nft_staking
         staker: &signer, 
         creator: address,
         collection_obj: Object<Collection>,
-        token_name: String,
-    )acquires MovementStaking, MovementReward, ResourceInfo, StakedNFTsRegistry {
+        token_obj: Object<Token>,
+    )acquires MovementStaking, MovementReward, ResourceInfo, StakedNFTsRegistry, SeedResourceInfo {
         let staker_addr = signer::address_of(staker);
         //verifying whether the creator has started the staking or not
-        let collection_name = collection::name(collection_obj);
-        let staking_address = get_resource_address(creator, collection_name);
+        let collection_addr = object::object_address(&collection_obj);
+        let staking_address = get_resource_address(creator, collection_addr);
         assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         assert!(staking_data.state, ENO_STOPPED);
         //getting the seeds
-        let seed = collection_name;
-        let seed2 = token_name;
-        append(&mut seed, seed2);
+        // Generate seed using collection address + token address
+        let token_addr = object::object_address(&token_obj);
+        let seed = to_bytes(&collection_addr);
+        let seed2 = to_bytes(&token_addr);
+        // Concatenate the byte vectors
+        let combined_seed = vector::empty<u8>();
+        vector::append(&mut combined_seed, seed);
+        vector::append(&mut combined_seed, seed2);
         //getting reward treasury address which has the tokens
-        let reward_treasury_address = get_resource_address(staker_addr, seed);
+        let reward_treasury_address = get_resource_address_by_seed(staker_addr, combined_seed);
         assert!(exists<MovementReward>(reward_treasury_address), ENO_STAKING_EXISTS);
         let reward_data = borrow_global_mut<MovementReward>(reward_treasury_address);
         let reward_treasury_signer_from_cap = account::create_signer_with_capability(&reward_data.treasury_cap);
@@ -722,29 +745,55 @@ module movement_staking::nft_staking
 
     // Helper functions
 
-    fun create_add_resource_info(account: &signer, string: String, resource: address) acquires ResourceInfo {
+    fun create_add_resource_info(account: &signer, collection_addr: address, resource: address) acquires ResourceInfo {
         let account_addr = signer::address_of(account);
         if (!exists<ResourceInfo>(account_addr)) {
             move_to(account, ResourceInfo { resource_map: simple_map::create() })
         };
         let maps = borrow_global_mut<ResourceInfo>(account_addr);
-        simple_map::add(&mut maps.resource_map, string, resource);
+        simple_map::add(&mut maps.resource_map, collection_addr, resource);
     }
 
-    fun get_resource_address(add1: address, string: String): address acquires ResourceInfo {
-        assert!(exists<ResourceInfo>(add1), ENO_NO_STAKING);
-        let maps = borrow_global<ResourceInfo>(add1);
-        let staking_address = *simple_map::borrow(&maps.resource_map, &string);
+    fun create_add_resource_info_by_seed(account: &signer, seed: vector<u8>, resource: address) acquires SeedResourceInfo {
+        let account_addr = signer::address_of(account);
+        if (!exists<SeedResourceInfo>(account_addr)) {
+            move_to(account, SeedResourceInfo { seed_resource_map: simple_map::create() })
+        };
+        let maps = borrow_global_mut<SeedResourceInfo>(account_addr);
+        simple_map::add(&mut maps.seed_resource_map, seed, resource);
+    }
+
+    fun get_resource_address(creator_addr: address, collection_addr: address): address acquires ResourceInfo {
+        assert!(exists<ResourceInfo>(creator_addr), ENO_NO_STAKING);
+        let maps = borrow_global<ResourceInfo>(creator_addr);
+        let staking_address = *simple_map::borrow(&maps.resource_map, &collection_addr);
         staking_address
 
     }
 
-    fun check_map(add1: address, string: String): bool acquires ResourceInfo {
-        if (!exists<ResourceInfo>(add1)) {
+    fun get_resource_address_by_seed(creator_addr: address, seed: vector<u8>): address acquires SeedResourceInfo {
+        assert!(exists<SeedResourceInfo>(creator_addr), ENO_NO_STAKING);
+        let maps = borrow_global<SeedResourceInfo>(creator_addr);
+        let staking_address = *simple_map::borrow(&maps.seed_resource_map, &seed);
+        staking_address
+
+    }
+
+    fun check_map(creator_addr: address, collection_addr: address): bool acquires ResourceInfo {
+        if (!exists<ResourceInfo>(creator_addr)) {
             false 
         } else {
-            let maps = borrow_global_mut<ResourceInfo>(add1);
-            simple_map::contains_key(&maps.resource_map, &string)
+            let maps = borrow_global_mut<ResourceInfo>(creator_addr);
+            simple_map::contains_key(&maps.resource_map, &collection_addr)
+        }
+    }
+
+    fun check_map_by_seed(creator_addr: address, seed: vector<u8>): bool acquires SeedResourceInfo {
+        if (!exists<SeedResourceInfo>(creator_addr)) {
+            false 
+        } else {
+            let maps = borrow_global_mut<SeedResourceInfo>(creator_addr);
+            simple_map::contains_key(&maps.seed_resource_map, &seed)
         }
     }
 
@@ -754,8 +803,8 @@ module movement_staking::nft_staking
         if (!exists<ResourceInfo>(creator_addr)) {
             return false
         };
-        let collection_name = collection::name(collection_obj);
-        let staking_address = get_resource_address(creator_addr, collection_name);
+        let collection_addr = object::object_address(&collection_obj);
+        let staking_address = get_resource_address(creator_addr, collection_addr);
         if (!exists<MovementStaking>(staking_address)) {
             return false
         };
@@ -830,6 +879,4 @@ module movement_staking::nft_staking
             staking_pools: smart_table::new(),
         });
     }
-
-
 }
