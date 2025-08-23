@@ -74,6 +74,23 @@ module movement_staking::nft_staking
         admin: address,
     }
 
+    // Global registry of all staking pools for easy discovery
+    struct StakingPoolsRegistry has key {
+        staking_pools: SmartTable<address, StakingPoolInfo>, // collection_addr -> pool info
+    }
+
+    // Info about each staking pool
+    struct StakingPoolInfo has store, drop, copy {
+        resource_address: address,      // The resource account address
+        creator: address,               // Who created the pool
+        collection_name: String,        // Collection name for display
+        dpr: u64,                      // Daily percentage return
+        state: bool,                    // Whether staking is active
+        amount: u64,                    // Total rewards available
+        metadata: Object<fungible_asset::Metadata>, // FA metadata for rewards
+        is_locked: bool,                // Whether rewards are locked
+    }
+
     // Info about each staked NFT
     struct StakedNFTInfo has store, drop, copy {
         nft_object_address: address,
@@ -112,6 +129,11 @@ module movement_staking::nft_staking
             allowed_collections: smart_table::new(),
             admin: admin_addr,
         });
+
+        // Initialize staking pools registry
+        move_to(admin, StakingPoolsRegistry {
+            staking_pools: smart_table::new(),
+        });
     }
     
     /// Creates a new staking pool for a collection with specified daily percentage return
@@ -123,7 +145,7 @@ module movement_staking::nft_staking
         metadata: Object<fungible_asset::Metadata>,
         // Whether or not to lock the reward tokens earned in the user's account 
         is_locked: bool,
-    ) acquires ResourceInfo, AllowedCollectionsRegistry {
+    ) acquires ResourceInfo, AllowedCollectionsRegistry, StakingPoolsRegistry {
         //verify the creator has the collection (DA standard)
         let collection_name = collection::name(collection_obj);
         let collection_addr = object::object_address(&collection_obj);
@@ -149,6 +171,21 @@ module movement_staking::nft_staking
         treasury_cap: staking_treasury_cap,
         is_locked: is_locked,
         });
+        
+        // Add to global staking pools registry
+        let staking_pool_info = StakingPoolInfo {
+            resource_address: staking_address,
+            creator: signer::address_of(creator),
+            collection_name: collection_name,
+            dpr: dpr,
+            state: true,
+            amount: total_amount,
+            metadata: metadata,
+            is_locked: is_locked,
+        };
+        
+        let global_registry = borrow_global_mut<StakingPoolsRegistry>(@movement_staking);
+        smart_table::add(&mut global_registry.staking_pools, collection_addr, staking_pool_info);
     }
 
     /// Updates the daily percentage return rate for an existing staking pool
@@ -156,48 +193,97 @@ module movement_staking::nft_staking
         creator: &signer,
         dpr: u64, //rate of payment,
         collection_obj: Object<Collection>, //the collection object owned by Creator 
-    ) acquires MovementStaking, ResourceInfo {
+    ) acquires MovementStaking, ResourceInfo, StakingPoolsRegistry {
         let creator_addr = signer::address_of(creator);
         //verify the creator has the collection
         let collection_name = collection::name(collection_obj);
         let staking_address = get_resource_address(creator_addr, collection_name);
         assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
-        staking_data.dpr=dpr;
+        staking_data.dpr = dpr;
+        
+        // Update the global registry to reflect the DPR change
+        let collection_addr = object::object_address(&collection_obj);
+        let global_registry = borrow_global_mut<StakingPoolsRegistry>(@movement_staking);
+        if (smart_table::contains(&global_registry.staking_pools, collection_addr)) {
+            let pool_info = smart_table::borrow_mut(&mut global_registry.staking_pools, collection_addr);
+            pool_info.dpr = dpr;
+        };
     }
 
     /// Stops staking for a collection, preventing new stakes and claims
     public entry fun creator_stop_staking(
         creator: &signer,
         collection_obj: Object<Collection>, //the collection object owned by Creator 
-    ) acquires MovementStaking, ResourceInfo {
+    ) acquires MovementStaking, ResourceInfo, StakingPoolsRegistry {
         let creator_addr = signer::address_of(creator);
-       //get staking address
+        //get staking address
         let collection_name = collection::name(collection_obj);
         let staking_address = get_resource_address(creator_addr, collection_name);
         assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
-        staking_data.state=false;
+        staking_data.state = false;
+        
+        // Update the global registry to reflect the state change
+        let collection_addr = object::object_address(&collection_obj);
+        let global_registry = borrow_global_mut<StakingPoolsRegistry>(@movement_staking);
+        if (smart_table::contains(&global_registry.staking_pools, collection_addr)) {
+            let pool_info = smart_table::borrow_mut(&mut global_registry.staking_pools, collection_addr);
+            pool_info.state = false;
+        };
     }
 
-    /// Deposits additional reward tokens into the staking pool and re-enables staking
+    /// Deposits additional reward tokens into the staking pool (does not change staking state)
     public entry fun deposit_staking_rewards(
         creator: &signer,
         collection_obj: Object<Collection>, //the collection object owned by Creator 
         amount: u64,
-    ) acquires MovementStaking, ResourceInfo {
+        ) acquires MovementStaking, ResourceInfo, StakingPoolsRegistry {
         let creator_addr = signer::address_of(creator);
         //verify the creator has the collection
          assert!(exists<ResourceInfo>(creator_addr), ENO_NO_STAKING);
         let collection_name = collection::name(collection_obj);
-        let staking_address = get_resource_address(creator_addr, collection_name); 
+        let staking_address = get_resource_address(creator_addr, collection_name);
         assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists       
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         // Transfer FA from creator to staking treasury store
         primary_fungible_store::transfer(creator, staking_data.metadata, staking_address, amount);
-        staking_data.amount= staking_data.amount+amount;
-        staking_data.state=true;
+        staking_data.amount = staking_data.amount + amount;
+        // Note: deposit_staking_rewards does NOT change the staking state
         
+        // Update the global registry to reflect the new amount (but not state)
+        let collection_addr = object::object_address(&collection_obj);
+        let global_registry = borrow_global_mut<StakingPoolsRegistry>(@movement_staking);
+        if (smart_table::contains(&global_registry.staking_pools, collection_addr)) {
+            let pool_info = smart_table::borrow_mut(&mut global_registry.staking_pools, collection_addr);
+            pool_info.amount = staking_data.amount;
+        };
+    }
+
+    /// Allows the creator to resume staking for a previously stopped collection
+    /// This function explicitly re-enables staking after it has been stopped
+    public entry fun creator_resume_staking(
+        creator: &signer,
+        collection_obj: Object<Collection>,
+    ) acquires MovementStaking, ResourceInfo, StakingPoolsRegistry {
+        let creator_addr = signer::address_of(creator);
+        // Verify the creator has the collection
+        assert!(exists<ResourceInfo>(creator_addr), ENO_NO_STAKING);
+        let collection_name = collection::name(collection_obj);
+        let staking_address = get_resource_address(creator_addr, collection_name);
+        assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);
+        
+        let staking_data = borrow_global_mut<MovementStaking>(staking_address);
+        // Re-enable staking
+        staking_data.state = true;
+        
+        // Update the global registry to reflect the state change
+        let collection_addr = object::object_address(&collection_obj);
+        let global_registry = borrow_global_mut<StakingPoolsRegistry>(@movement_staking);
+        if (smart_table::contains(&global_registry.staking_pools, collection_addr)) {
+            let pool_info = smart_table::borrow_mut(&mut global_registry.staking_pools, collection_addr);
+            pool_info.state = true;
+        };
     }
 
     /// Adds a collection to the allowed list for staking (admin only)
@@ -356,6 +442,64 @@ module movement_staking::nft_staking
         metadata_types
     }
 
+    #[view]
+    /// Returns all active staking pools (where state = true)
+    public fun view_active_staking_pools(): vector<StakingPoolInfo> acquires StakingPoolsRegistry {
+        if (!exists<StakingPoolsRegistry>(@movement_staking)) {
+            return vector::empty<StakingPoolInfo>()
+        };
+        
+        let registry = borrow_global<StakingPoolsRegistry>(@movement_staking);
+        let active_pools = vector::empty<StakingPoolInfo>();
+        
+        // Iterate through all staking pools and filter by state = true
+        let keys = smart_table::keys(&registry.staking_pools);
+        let i = 0;
+        let len = vector::length(&keys);
+        
+        while (i < len) {
+            let collection_addr = vector::borrow(&keys, i);
+            let pool_info = smart_table::borrow(&registry.staking_pools, *collection_addr);
+            
+            // Only include pools where state = true (active)
+            if (pool_info.state) {
+                vector::push_back(&mut active_pools, *pool_info);
+            };
+            
+            i = i + 1;
+        };
+        
+        active_pools
+    }
+
+    #[view]
+    /// Returns all staking pools (active and inactive)
+    public fun view_all_staking_pools(): vector<StakingPoolInfo> acquires StakingPoolsRegistry {
+        if (!exists<StakingPoolsRegistry>(@movement_staking)) {
+            return vector::empty<StakingPoolInfo>()
+        };
+        
+        let registry = borrow_global<StakingPoolsRegistry>(@movement_staking);
+        let all_pools = vector::empty<StakingPoolInfo>();
+        
+        // Iterate through all staking pools
+        let keys = smart_table::keys(&registry.staking_pools);
+        let i = 0;
+        let len = vector::length(&keys);
+        
+        while (i < len) {
+            let collection_addr = vector::borrow(&keys, i);
+            let pool_info = smart_table::borrow(&registry.staking_pools, *collection_addr);
+            vector::push_back(&mut all_pools, *pool_info);
+            i = i + 1;
+        };
+        
+        all_pools
+    }
+
+
+
+
     // -------- Functions for staking and earning rewards -------- 
 
     /// Stakes an NFT token to start earning rewards based on the collection's daily percentage return
@@ -386,7 +530,7 @@ module movement_staking::nft_staking
         let should_pass_restake = check_map(staker_addr, seed);
         if (should_pass_restake) {
             let reward_treasury_address = get_resource_address(staker_addr, seed);
-            assert!(exists<MovementReward>(reward_treasury_address), ENO_NO_STAKING);
+            assert!(exists<MovementReward>(reward_treasury_address), ENO_STAKING_EXISTS);
             let reward_data = borrow_global_mut<MovementReward>(reward_treasury_address);
             let now = aptos_framework::timestamp::now_seconds();
             reward_data.tokens=1;
@@ -711,6 +855,9 @@ module movement_staking::nft_staking
             allowed_collections: smart_table::new(),
             admin: signer::address_of(token_staking),
         });
+        move_to(token_staking, StakingPoolsRegistry {
+            staking_pools: smart_table::new(),
+        });
     }
     
     #[test_only]
@@ -722,6 +869,9 @@ module movement_staking::nft_staking
         move_to(token_staking, AllowedCollectionsRegistry {
             allowed_collections: smart_table::new(),
             admin: admin_addr,
+        });
+        move_to(token_staking, StakingPoolsRegistry {
+            staking_pools: smart_table::new(),
         });
     }
 }

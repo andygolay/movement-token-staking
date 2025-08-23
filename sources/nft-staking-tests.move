@@ -547,13 +547,10 @@ module movement_staking::nft_staking_tests {
         // Verify staking is stopped
         assert!(!nft_staking::is_staking_enabled(sender_addr, collection_obj), 98);
         
-        nft_staking::deposit_staking_rewards(
-            &creator,
-            collection_obj,
-            5
-        );
+        // Re-enable staking using the proper function
+        nft_staking::creator_resume_staking(&creator, collection_obj);
         
-        // Verify staking is re-enabled after deposit
+        // Verify staking is re-enabled
         assert!(nft_staking::is_staking_enabled(sender_addr, collection_obj), 88);
     }
 
@@ -1327,7 +1324,7 @@ module movement_staking::nft_staking_tests {
     }
 
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
-    fun test_is_staking_enabled_enhanced(
+    fun test_is_staking_enabled(
         creator: signer,
         receiver: signer,
         token_staking: signer,
@@ -1378,10 +1375,10 @@ module movement_staking::nft_staking_tests {
         // Staking pool exists but is stopped
         assert!(!nft_staking::is_staking_enabled(sender_addr, collection_obj), 3);
         
-        // Re-enable staking by depositing rewards
-        nft_staking::deposit_staking_rewards(&creator, collection_obj, 10);
+        // Re-enable staking using the proper function
+        nft_staking::creator_resume_staking(&creator, collection_obj);
         
-        // Staking pool re-enabled after deposit
+        // Staking pool re-enabled
         assert!(nft_staking::is_staking_enabled(sender_addr, collection_obj), 4);
     }
 
@@ -1479,10 +1476,10 @@ module movement_staking::nft_staking_tests {
         nft_staking::creator_stop_staking(&creator, collection_obj);
         assert!(!nft_staking::is_staking_enabled(sender_addr, collection_obj), 2);
         
-        // Deposit more rewards to re-enable
-        nft_staking::deposit_staking_rewards(&creator, collection_obj, 50);
+        // Re-enable the pool using the proper function
+        nft_staking::creator_resume_staking(&creator, collection_obj);
         
-        // Verify pool is re-enabled after deposit
+        // Verify pool is re-enabled
         assert!(nft_staking::is_staking_enabled(sender_addr, collection_obj), 3);
         
         // Deposit more rewards while pool is active
@@ -1565,5 +1562,103 @@ module movement_staking::nft_staking_tests {
         assert!(vector::length(&allowed_collections) == 2, 12);
         assert!(vector::contains(&allowed_collections, &string::utf8(b"Admin Test Collection A")), 13);
         assert!(vector::contains(&allowed_collections, &string::utf8(b"Admin Test Collection B")), 14);
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
+    fun test_staking_pools_view_functions(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+    ) {
+        let creator_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        
+        // Create accounts
+        aptos_framework::account::create_account_for_test(creator_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Initialize global registries for testing with creator as admin
+        nft_staking::test_init_registries_with_admin(&token_staking, creator_addr);
+        
+        // Initialize FA module
+        banana_a::test_init(&token_staking);
+        let metadata = banana_a::get_metadata();
+        banana_a::mint(&token_staking, creator_addr, 1000);
+        
+        // Test initial state - no staking pools
+        let initial_active_pools = nft_staking::view_active_staking_pools();
+        let initial_all_pools = nft_staking::view_all_staking_pools();
+        assert!(vector::length(&initial_active_pools) == 0, 1);
+        assert!(vector::length(&initial_all_pools) == 0, 2);
+        
+        // Create first collection and staking pool
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Test Collection A"),
+            string::utf8(b"Test Collection A"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        let collection_a_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Test Collection A"));
+        let collection_a_obj = object::address_to_object<Collection>(collection_a_addr);
+        
+        nft_staking::add_allowed_collection(&creator, collection_a_obj);
+        nft_staking::create_staking(&creator, 20, collection_a_obj, 500, metadata, true);
+        
+        // Test after creating first pool
+        let active_pools_after_first = nft_staking::view_active_staking_pools();
+        let all_pools_after_first = nft_staking::view_all_staking_pools();
+        assert!(vector::length(&active_pools_after_first) == 1, 3);
+        assert!(vector::length(&all_pools_after_first) == 1, 4);
+        
+        // Verify first pool info exists (we can't access individual fields from tests)
+        let _first_pool = vector::borrow(&active_pools_after_first, 0);
+        
+        // Create second collection and staking pool
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Test Collection B"),
+            string::utf8(b"Test Collection B"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        let collection_b_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Test Collection B"));
+        let collection_b_obj = object::address_to_object<Collection>(collection_b_addr);
+        
+        nft_staking::add_allowed_collection(&creator, collection_b_obj);
+        nft_staking::create_staking(&creator, 15, collection_b_obj, 300, metadata, false);
+        
+        // Test after creating second pool
+        let active_pools_after_second = nft_staking::view_active_staking_pools();
+        let all_pools_after_second = nft_staking::view_all_staking_pools();
+        assert!(vector::length(&active_pools_after_second) == 2, 5);
+        assert!(vector::length(&all_pools_after_second) == 2, 6);
+        
+        // Stop the first staking pool
+        nft_staking::creator_stop_staking(&creator, collection_a_obj);
+        
+        // Test after stopping first pool
+        let active_pools_after_stop = nft_staking::view_active_staking_pools();
+        let all_pools_after_stop = nft_staking::view_all_staking_pools();
+        assert!(vector::length(&active_pools_after_stop) == 1, 7); // Only second pool active
+        assert!(vector::length(&all_pools_after_stop) == 2, 8); // Both pools still exist
+        
+        // Re-enable the first pool using the proper function
+        nft_staking::creator_resume_staking(&creator, collection_a_obj);
+        
+        // Test after re-enabling
+        let active_pools_after_reenable = nft_staking::view_active_staking_pools();
+        let all_pools_after_reenable = nft_staking::view_all_staking_pools();
+        assert!(vector::length(&active_pools_after_reenable) == 2, 9); // Both active again
+        assert!(vector::length(&all_pools_after_reenable) == 2, 10); // Still 2 total
+        
+        // Update DPR of second pool (test that it doesn't crash)
+        nft_staking::update_dpr(&creator, 25, collection_b_obj);
+        
+        // Verify pools are still there after DPR update
+        let updated_pools = nft_staking::view_active_staking_pools();
+        assert!(vector::length(&updated_pools) == 2, 11);
     }
 } 
