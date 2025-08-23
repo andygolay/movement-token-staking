@@ -76,13 +76,7 @@ module movement_staking::nft_staking
 
     // Global registry of all staking pools for easy discovery
     struct StakingPoolsRegistry has key {
-        staking_pools: SmartTable<address, StakingPoolReference>, // collection_addr -> lookup info
-    }
-
-    // Reference info to locate the actual MovementStaking data
-    struct StakingPoolReference has store, drop, copy {
-        creator: address,               // Who created the pool
-        collection_name: String,        // Collection name for lookup
+        staking_pools: SmartTable<address, address>, // collection_addr -> resource_address
     }
 
     // Info about each staked NFT
@@ -166,14 +160,9 @@ module movement_staking::nft_staking
         is_locked: is_locked,
         });
         
-        // Add to global staking pools registry
-        let staking_pool_ref = StakingPoolReference {
-            creator: signer::address_of(creator),
-            collection_name: collection_name,
-        };
-        
+        // Add to global staking pools registry (just for discovery)
         let global_registry = borrow_global_mut<StakingPoolsRegistry>(@movement_staking);
-        smart_table::add(&mut global_registry.staking_pools, collection_addr, staking_pool_ref);
+        smart_table::add(&mut global_registry.staking_pools, collection_addr, staking_address);
     }
 
     /// Updates the daily percentage return rate for an existing staking pool
@@ -407,14 +396,14 @@ module movement_staking::nft_staking
     }
 
     #[view]
-    /// Returns all active staking pools (where state = true)
-    public fun view_active_staking_pools(): vector<StakingPoolReference> acquires StakingPoolsRegistry, MovementStaking, ResourceInfo {
+    /// Returns resource addresses of all active staking pools (where state = true)
+    public fun view_active_staking_pools(): vector<address> acquires StakingPoolsRegistry, MovementStaking {
         if (!exists<StakingPoolsRegistry>(@movement_staking)) {
-            return vector::empty<StakingPoolReference>()
+            return vector::empty<address>()
         };
         
         let registry = borrow_global<StakingPoolsRegistry>(@movement_staking);
-        let active_pools = vector::empty<StakingPoolReference>();
+        let active_pools = vector::empty<address>();
         
         // Iterate through all staking pools and filter by state = true
         let keys = smart_table::keys(&registry.staking_pools);
@@ -423,15 +412,14 @@ module movement_staking::nft_staking
         
         while (i < len) {
             let collection_addr = vector::borrow(&keys, i);
-            let pool_ref = smart_table::borrow(&registry.staking_pools, *collection_addr);
+            let staking_address = smart_table::borrow(&registry.staking_pools, *collection_addr);
             
-            // Get the actual MovementStaking data to check state
-            let staking_address = get_resource_address(pool_ref.creator, pool_ref.collection_name);
-            if (exists<MovementStaking>(staking_address)) {
-                let staking_data = borrow_global<MovementStaking>(staking_address);
+            // Check if the staking pool is active
+            if (exists<MovementStaking>(*staking_address)) {
+                let staking_data = borrow_global<MovementStaking>(*staking_address);
                 if (staking_data.state) {
                     // Only include active pools
-                    vector::push_back(&mut active_pools, *pool_ref);
+                    vector::push_back(&mut active_pools, *staking_address);
                 };
             };
             i = i + 1;
@@ -441,14 +429,14 @@ module movement_staking::nft_staking
     }
 
     #[view]
-    /// Returns all staking pools (active and inactive)
-    public fun view_all_staking_pools(): vector<StakingPoolReference> acquires StakingPoolsRegistry {
+    /// Returns resource addresses of all staking pools (active and inactive)
+    public fun view_all_staking_pools(): vector<address> acquires StakingPoolsRegistry {
         if (!exists<StakingPoolsRegistry>(@movement_staking)) {
-            return vector::empty<StakingPoolReference>()
+            return vector::empty<address>()
         };
         
         let registry = borrow_global<StakingPoolsRegistry>(@movement_staking);
-        let all_pools = vector::empty<StakingPoolReference>();
+        let all_pools = vector::empty<address>();
         
         // Iterate through all staking pools
         let keys = smart_table::keys(&registry.staking_pools);
@@ -457,8 +445,8 @@ module movement_staking::nft_staking
         
         while (i < len) {
             let collection_addr = vector::borrow(&keys, i);
-            let pool_ref = smart_table::borrow(&registry.staking_pools, *collection_addr);
-            vector::push_back(&mut all_pools, *pool_ref);
+            let staking_address = smart_table::borrow(&registry.staking_pools, *collection_addr);
+            vector::push_back(&mut all_pools, *staking_address);
             i = i + 1;
         };
         
@@ -843,55 +831,5 @@ module movement_staking::nft_staking
         });
     }
 
-    // Helper functions to get detailed staking pool information
-    #[view]
-    /// Get the resource address for a staking pool
-    public fun get_staking_resource_address(creator: address, collection_name: String): address acquires ResourceInfo {
-        get_resource_address(creator, collection_name)
-    }
 
-    #[view]
-    /// Get the DPR for a staking pool
-    public fun get_staking_dpr(creator: address, collection_name: String): u64 acquires MovementStaking, ResourceInfo {
-        let staking_address = get_resource_address(creator, collection_name);
-        assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);
-        let staking_data = borrow_global<MovementStaking>(staking_address);
-        staking_data.dpr
-    }
-
-    #[view]
-    /// Get the current state for a staking pool
-    public fun get_staking_state(creator: address, collection_name: String): bool acquires MovementStaking, ResourceInfo {
-        let staking_address = get_resource_address(creator, collection_name);
-        assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);
-        let staking_data = borrow_global<MovementStaking>(staking_address);
-        staking_data.state
-    }
-
-    #[view]
-    /// Get the current amount for a staking pool
-    public fun get_staking_amount(creator: address, collection_name: String): u64 acquires MovementStaking, ResourceInfo {
-        let staking_address = get_resource_address(creator, collection_name);
-        assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);
-        let staking_data = borrow_global<MovementStaking>(staking_address);
-        staking_data.amount
-    }
-
-    #[view]
-    /// Get the metadata for a staking pool
-    public fun get_staking_metadata(creator: address, collection_name: String): Object<fungible_asset::Metadata> acquires MovementStaking, ResourceInfo {
-        let staking_address = get_resource_address(creator, collection_name);
-        assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);
-        let staking_data = borrow_global<MovementStaking>(staking_address);
-        staking_data.metadata
-    }
-
-    #[view]
-    /// Get the locked status for a staking pool
-    public fun get_staking_is_locked(creator: address, collection_name: String): bool acquires MovementStaking, ResourceInfo {
-        let staking_address = get_resource_address(creator, collection_name);
-        assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);
-        let staking_data = borrow_global<MovementStaking>(staking_address);
-        staking_data.is_locked
-    }
 }
