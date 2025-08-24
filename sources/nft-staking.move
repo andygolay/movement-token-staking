@@ -91,10 +91,10 @@ module movement_staking::nft_staking
     }
 
     // Error codes
-    const ENO_NO_COLLECTION: u64=0;
+    const ENO_COLLECTION: u64=0;
     const ENO_STAKING_EXISTS: u64=1;
-    const ENO_NO_STAKING: u64=2;
-    const ENO_NO_TOKEN_IN_TOKEN_STORE: u64=3;
+    const ENO_STAKING: u64=2;
+    const ENO_TOKEN_IN_TOKEN_STORE: u64=3;
     const ENO_STOPPED: u64=4;
     const ENO_METADATA_MISMATCH: u64=5;
     const ENO_STAKER_MISMATCH: u64=6;
@@ -139,7 +139,7 @@ module movement_staking::nft_staking
     ) acquires ResourceInfo, AllowedCollectionsRegistry, StakingPoolsRegistry {
         //verify the creator has the collection (DA standard)
         let collection_addr = object::object_address(&collection_obj);
-        assert!(object::is_object(collection_addr), ENO_NO_COLLECTION);
+        assert!(object::is_object(collection_addr), ENO_COLLECTION);
         
         // Check if collection is allowed for staking
         let allowed_collections = borrow_global<AllowedCollectionsRegistry>(@movement_staking);
@@ -177,7 +177,7 @@ module movement_staking::nft_staking
         //verify the creator has the collection
         let collection_addr = object::object_address(&collection_obj);
         let staking_address = get_resource_address(creator_addr, collection_addr);
-        assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists
+        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);// the staking doesn't exists
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         staking_data.dpr = dpr;
         
@@ -193,7 +193,7 @@ module movement_staking::nft_staking
         //get staking address
         let collection_addr = object::object_address(&collection_obj);
         let staking_address = get_resource_address(creator_addr, collection_addr);
-        assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists
+        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);// the staking doesn't exists
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         staking_data.state = false;
         
@@ -208,10 +208,10 @@ module movement_staking::nft_staking
         ) acquires MovementStaking, ResourceInfo {
         let creator_addr = signer::address_of(creator);
         //verify the creator has the collection
-         assert!(exists<ResourceInfo>(creator_addr), ENO_NO_STAKING);
+         assert!(exists<ResourceInfo>(creator_addr), ENO_STAKING);
         let collection_addr = object::object_address(&collection_obj);
         let staking_address = get_resource_address(creator_addr, collection_addr);
-        assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists       
+        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);// the staking doesn't exists       
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         // Transfer FA from creator to staking treasury store
         primary_fungible_store::transfer(creator, staking_data.metadata, staking_address, amount);
@@ -229,10 +229,10 @@ module movement_staking::nft_staking
     ) acquires MovementStaking, ResourceInfo {
         let creator_addr = signer::address_of(creator);
         // Verify the creator has the collection
-        assert!(exists<ResourceInfo>(creator_addr), ENO_NO_STAKING);
+        assert!(exists<ResourceInfo>(creator_addr), ENO_STAKING);
         let collection_addr = object::object_address(&collection_obj);
         let staking_address = get_resource_address(creator_addr, collection_addr);
-        assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);
+        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);
         
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         // Re-enable staking
@@ -474,16 +474,16 @@ module movement_staking::nft_staking
     ) acquires MovementStaking, ResourceInfo, MovementReward, StakedNFTsRegistry, SeedResourceInfo {
         let staker_addr = signer::address_of(staker);
         // verify ownership of the token
-        assert!(object::owner(nft) == staker_addr, ENO_NO_TOKEN_IN_TOKEN_STORE);
+        assert!(object::owner(nft) == staker_addr, ENO_TOKEN_IN_TOKEN_STORE);
         // derive creator from token (DA standard)
         let creator_addr = token::creator(nft);
         // verify the collection exists by getting the collection address directly
         let collection_addr = token::collection_object(nft);
         let collection_addr = object::object_address(&collection_addr);
-        assert!(object::is_object(collection_addr), ENO_NO_COLLECTION);
+        assert!(object::is_object(collection_addr), ENO_COLLECTION);
         // staking pool
         let staking_address = get_resource_address(creator_addr, collection_addr);
-        assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);
+        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);
         let staking_data = borrow_global<MovementStaking>(staking_address);
         assert!(staking_data.state, ENO_STOPPED);
         // seed for reward vault mapping: collection address + token address
@@ -556,7 +556,7 @@ module movement_staking::nft_staking
         let nft_count = vector::length(&nfts);
         
         // Ensure we have at least one NFT to stake
-        assert!(nft_count > 0, ENO_NO_TOKEN_IN_TOKEN_STORE);
+        assert!(nft_count > 0, ENO_TOKEN_IN_TOKEN_STORE);
         
         // Get the global registry (must exist)
         let registry = borrow_global_mut<StakedNFTsRegistry>(@movement_staking);
@@ -572,19 +572,19 @@ module movement_staking::nft_staking
             let nft = *vector::borrow(&nfts, i);
             
             // Validate ownership
-            assert!(object::owner(nft) == staker_addr, ENO_NO_TOKEN_IN_TOKEN_STORE);
+            assert!(object::owner(nft) == staker_addr, ENO_TOKEN_IN_TOKEN_STORE);
             
             // Get NFT metadata
             let creator_addr = token::creator(nft);
             
-            // Validate collection exists  
-            let collection_addr = token::collection_object(nft);
-            let collection_addr = object::object_address(&collection_addr);
-            assert!(object::is_object(collection_addr), ENO_NO_COLLECTION);
+                    // Validate collection exists  
+        let collection_addr = token::collection_object(nft);
+        let collection_addr = object::object_address(&collection_addr);
+        assert!(object::is_object(collection_addr), ENO_COLLECTION);
             
             // Validate staking pool exists
             let staking_address = get_resource_address(creator_addr, collection_addr);
-            assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);
+            assert!(exists<MovementStaking>(staking_address), ENO_STAKING);
             let staking_data = borrow_global<MovementStaking>(staking_address);
             assert!(staking_data.state, ENO_STOPPED);
             
@@ -649,7 +649,7 @@ module movement_staking::nft_staking
         //verifying whether the creator has started the staking or not
         let collection_addr = object::object_address(&collection_obj);
         let staking_address = get_resource_address(creator, collection_addr);
-        assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists
+        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);// the staking doesn't exists
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         let staking_treasury_signer_from_cap = account::create_signer_with_capability(&staking_data.treasury_cap);
         assert!(staking_data.state, ENO_STOPPED);
@@ -696,7 +696,7 @@ module movement_staking::nft_staking
         //verifying whether the creator has started the staking or not
         let collection_addr = object::object_address(&collection_obj);
         let staking_address = get_resource_address(creator, collection_addr);
-        assert!(exists<MovementStaking>(staking_address), ENO_NO_STAKING);// the staking doesn't exists
+        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);// the staking doesn't exists
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         assert!(staking_data.state, ENO_STOPPED);
         //getting the seeds
@@ -764,7 +764,7 @@ module movement_staking::nft_staking
     }
 
     fun get_resource_address(creator_addr: address, collection_addr: address): address acquires ResourceInfo {
-        assert!(exists<ResourceInfo>(creator_addr), ENO_NO_STAKING);
+        assert!(exists<ResourceInfo>(creator_addr), ENO_STAKING);
         let maps = borrow_global<ResourceInfo>(creator_addr);
         let staking_address = *simple_map::borrow(&maps.resource_map, &collection_addr);
         staking_address
@@ -772,7 +772,7 @@ module movement_staking::nft_staking
     }
 
     fun get_resource_address_by_seed(creator_addr: address, seed: vector<u8>): address acquires SeedResourceInfo {
-        assert!(exists<SeedResourceInfo>(creator_addr), ENO_NO_STAKING);
+        assert!(exists<SeedResourceInfo>(creator_addr), ENO_STAKING);
         let maps = borrow_global<SeedResourceInfo>(creator_addr);
         let staking_address = *simple_map::borrow(&maps.seed_resource_map, &seed);
         staking_address

@@ -29,10 +29,10 @@ module movement_staking::nft_staking_tests {
     const FRAMEWORK_ADDR: address = @0x1;
     
     // Error codes
-    const ENO_NO_COLLECTION: u64 = 0;
+    const ENO_COLLECTION: u64 = 0;
     const ENO_STAKING_EXISTS: u64 = 1;
-    const ENO_NO_STAKING: u64 = 2;
-    const ENO_NO_TOKEN_IN_TOKEN_STORE: u64 = 3;
+    const ENO_STAKING: u64 = 2;
+    const ENO_TOKEN_IN_TOKEN_STORE: u64 = 3;
     const ENO_STOPPED: u64 = 4;
     const ENO_COLLECTION_NOT_ALLOWED: u64 = 9;
     const ENO_NOT_ADMIN: u64 = 10;
