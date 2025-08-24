@@ -29,13 +29,9 @@ module movement_staking::nft_staking_tests {
     const FRAMEWORK_ADDR: address = @0x1;
     
     // Error codes
-    const ENO_COLLECTION: u64 = 0;
-    const ENO_STAKING_EXISTS: u64 = 1;
-    const ENO_STAKING: u64 = 2;
-    const ENO_TOKEN_IN_TOKEN_STORE: u64 = 3;
-    const ENO_STOPPED: u64 = 4;
-    const ENO_COLLECTION_NOT_ALLOWED: u64 = 9;
-    const ENO_NOT_ADMIN: u64 = 10;
+    const ESTOPPED: u64 = 4;
+    const ECOLLECTION_NOT_ALLOWED: u64 = 9;
+    const ENOT_ADMIN: u64 = 10;
     
     #[test(creator = @0xa11ce, token_staking = @movement_staking)]
     fun test_allowed_collections_functionality(
@@ -80,13 +76,13 @@ module movement_staking::nft_staking_tests {
         let disallowed_collection_obj = object::address_to_object<Collection>(disallowed_collection_addr);
         
         // Test initial state - no collections allowed
-        assert!(!nft_staking::is_collection_allowed(allowed_collection_obj), 1);
-        assert!(!nft_staking::is_collection_allowed(disallowed_collection_obj), 2);
+        assert!(!nft_staking::is_collection_allowed(allowed_collection_obj), ECOLLECTION_NOT_ALLOWED);
+        assert!(!nft_staking::is_collection_allowed(disallowed_collection_obj), ECOLLECTION_NOT_ALLOWED);
         
         // Add collection to allowed list
         nft_staking::add_allowed_collection(&creator, allowed_collection_obj);
-        assert!(nft_staking::is_collection_allowed(allowed_collection_obj), 3);
-        assert!(!nft_staking::is_collection_allowed(disallowed_collection_obj), 4);
+        assert!(nft_staking::is_collection_allowed(allowed_collection_obj), ECOLLECTION_NOT_ALLOWED);
+        assert!(!nft_staking::is_collection_allowed(disallowed_collection_obj), ECOLLECTION_NOT_ALLOWED);
         
         // Get collection object for staking
         let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Allowed Collection"));
@@ -101,7 +97,7 @@ module movement_staking::nft_staking_tests {
     }
     
     #[test(creator = @0xa11ce, token_staking = @movement_staking)]
-    #[expected_failure(abort_code = ENO_COLLECTION_NOT_ALLOWED, location = movement_staking::nft_staking)]
+    #[expected_failure(abort_code = ECOLLECTION_NOT_ALLOWED, location = movement_staking::nft_staking)]
     fun test_create_staking_disallowed_collection(
         creator: signer,
         token_staking: signer,
@@ -139,7 +135,7 @@ module movement_staking::nft_staking_tests {
     }
     
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
-    #[expected_failure(abort_code = ENO_NOT_ADMIN, location = movement_staking::nft_staking)]
+    #[expected_failure(abort_code = ENOT_ADMIN, location = movement_staking::nft_staking)]
     fun test_non_admin_cannot_manage_collections(
         creator: signer,
         receiver: signer,
@@ -556,7 +552,7 @@ module movement_staking::nft_staking_tests {
     }
 
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
-    #[expected_failure(abort_code = 0x4, location = movement_staking::nft_staking)]
+    #[expected_failure(abort_code = ESTOPPED, location = movement_staking::nft_staking)]
     fun test_stake_when_stopped(
         creator: signer,
         receiver: signer,
@@ -606,7 +602,7 @@ module movement_staking::nft_staking_tests {
         nft_staking::create_staking(&creator, 10, collection_obj, 90, metadata, true);
         nft_staking::creator_stop_staking(&creator, collection_obj);
         
-        // Attempt stake (should abort with ENO_STOPPED=4)
+        // Attempt stake (should abort with ESTOPPED)
         nft_staking::stake_token(&receiver, object::address_to_object<Token>(token_addr));
     }
 
