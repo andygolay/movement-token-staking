@@ -86,7 +86,6 @@ module movement_staking::nft_staking
     struct StakedNFTInfo has store, drop, copy {
         nft_object_address: address,
         collection_addr: address,
-        token_addr: address,
         staked_at: u64,
     }
 
@@ -154,12 +153,12 @@ module movement_staking::nft_staking
         primary_fungible_store::transfer(creator, metadata, staking_address, total_amount);
         move_to<MovementStaking>(&staking_treasury_signer_from_cap, MovementStaking{
         collection: collection_addr,
-        dpr: dpr,
+        dpr,
         state: true,
         amount: total_amount,
-        metadata: metadata, 
+        metadata, 
         treasury_cap: staking_treasury_cap,
-        is_locked: is_locked,
+        is_locked,
         });
         
         // Add to global staking pools registry (just for discovery)
@@ -531,7 +530,6 @@ module movement_staking::nft_staking
         let staked_nft_info = StakedNFTInfo {
             nft_object_address: token_addr,
             collection_addr: collection_addr,
-            token_addr: token_addr,
             staked_at: timestamp::now_seconds(),
         };
         
@@ -787,6 +785,17 @@ module movement_staking::nft_staking
     fun freeze_user_account(user: &signer, metadata: Object<fungible_asset::Metadata>) {
         // Delegate freezing logic to the freeze_registry module
         freeze_registry::freeze_user_account(user, metadata);
+    }
+
+    #[view]
+    public fun get_staking_metadata(
+        creator_addr: address, collection_obj: Object<Collection>
+    ): Object<fungible_asset::Metadata> acquires MovementStaking, ResourceInfo {
+        let collection_addr = object::object_address(&collection_obj);
+        let staking_address = get_resource_address(creator_addr, collection_addr);
+        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);
+        let staking_data = borrow_global<MovementStaking>(staking_address);
+        staking_data.metadata
     }
 
     #[test_only]
