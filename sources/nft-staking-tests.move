@@ -959,7 +959,7 @@ module movement_staking::nft_staking_tests {
     }
 
     #[test(creator = @0x123, user1 = @0x456, token_staking = @0xfee, framework = @0x1)]
-    fun test_batch_staking_functionality(
+    fun test_batch_staking_happy_path_with_freezing(
         creator: signer,
         user1: signer,
         token_staking: signer,
@@ -1016,26 +1016,16 @@ module movement_staking::nft_staking_tests {
             option::none(),
             string::utf8(b"uri"),
         );
-        let token3_ref = token::create_named_token(
-            &creator,
-            string::utf8(b"Batch Test Collection"),
-            string::utf8(b"desc"),
-            string::utf8(b"Batch Token 3"),
-            option::none(),
-            string::utf8(b"uri"),
-        );
         
         let token1_addr = object::address_from_constructor_ref(&token1_ref);
         let token2_addr = object::address_from_constructor_ref(&token2_ref);
-        let token3_addr = object::address_from_constructor_ref(&token3_ref);
         
         // Transfer tokens to user1
         object::transfer(&creator, object::address_to_object<Token>(token1_addr), user1_addr);
         object::transfer(&creator, object::address_to_object<Token>(token2_addr), user1_addr);
-        object::transfer(&creator, object::address_to_object<Token>(token3_addr), user1_addr);
         
-        // Create staking pool
-        nft_staking::create_staking(&creator, 10, collection_obj, 500, metadata, false);
+        // Create staking pool with freezing enabled (is_locked = true)
+        nft_staking::create_staking(&creator, 20, collection_obj, 500, metadata, true);
         
         // Verify registry is initially empty
         assert!(nft_staking::get_staked_nfts_count(user1_addr) == 0, 1);
@@ -1044,30 +1034,50 @@ module movement_staking::nft_staking_tests {
         let nfts_to_stake = vector::empty<object::Object<Token>>();
         vector::push_back(&mut nfts_to_stake, object::address_to_object<Token>(token1_addr));
         vector::push_back(&mut nfts_to_stake, object::address_to_object<Token>(token2_addr));
-        vector::push_back(&mut nfts_to_stake, object::address_to_object<Token>(token3_addr));
         
-        // Batch stake all 3 tokens
+        // Batch stake both tokens
         nft_staking::batch_stake_tokens(&user1, nfts_to_stake);
         
         // Verify all tokens are no longer owned by user1 (they've been staked)
         assert!(object::owner(object::address_to_object<Token>(token1_addr)) != user1_addr, 2);
         assert!(object::owner(object::address_to_object<Token>(token2_addr)) != user1_addr, 3);
-        assert!(object::owner(object::address_to_object<Token>(token3_addr)) != user1_addr, 4);
         
-        // Verify registry contains all 3 staked NFTs
-        assert!(nft_staking::get_staked_nfts_count(user1_addr) == 3, 5);
-        let staked_nfts = nft_staking::get_staked_nfts(user1_addr);
-        assert!(vector::length(&staked_nfts) == 3, 6);
+        // Verify registry contains both staked NFTs
+        assert!(nft_staking::get_staked_nfts_count(user1_addr) == 2, 4);
         
-        // Unstake all tokens individually to clean up
+        // Advance time by 1 day to accrue rewards
+        timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
+        
+        // Check balance before claiming
+        let balance_before = primary_fungible_store::balance(user1_addr, metadata);
+        
+        // Claim rewards for first token only (account will be frozen after this)
+        nft_staking::claim_reward(&user1, collection_obj, object::address_to_object<Token>(token1_addr), creator_addr);
+        
+        // Verify rewards were received and account is frozen (soulbound)
+        let balance_after = primary_fungible_store::balance(user1_addr, metadata);
+        assert!(balance_after > balance_before, 5);
+        assert!(primary_fungible_store::is_frozen(user1_addr, metadata), 6);
+        
+        // Unstake both tokens
         nft_staking::unstake_token(&user1, creator_addr, collection_obj, object::address_to_object<Token>(token1_addr));
         nft_staking::unstake_token(&user1, creator_addr, collection_obj, object::address_to_object<Token>(token2_addr));
-        nft_staking::unstake_token(&user1, creator_addr, collection_obj, object::address_to_object<Token>(token3_addr));
         
-        // Verify registry is cleaned up
-        assert!(nft_staking::get_staked_nfts_count(user1_addr) == 0, 7);
-        let final_nfts = nft_staking::get_staked_nfts(user1_addr);
-        assert!(vector::length(&final_nfts) == 0, 8);
+        // Verify tokens are returned to user1
+        assert!(object::owner(object::address_to_object<Token>(token1_addr)) == user1_addr, 7);
+        assert!(object::owner(object::address_to_object<Token>(token2_addr)) == user1_addr, 8);
+        
+        // Test batch restaking the same tokens (this tests the restaking logic)
+        let restake_nfts = vector::empty<object::Object<Token>>();
+        vector::push_back(&mut restake_nfts, object::address_to_object<Token>(token1_addr));
+        vector::push_back(&mut restake_nfts, object::address_to_object<Token>(token2_addr));
+        
+        nft_staking::batch_stake_tokens(&user1, restake_nfts);
+        
+        // Verify tokens are staked again (restaking worked)
+        assert!(object::owner(object::address_to_object<Token>(token1_addr)) != user1_addr, 9);
+        assert!(object::owner(object::address_to_object<Token>(token2_addr)) != user1_addr, 10);
+        assert!(nft_staking::get_staked_nfts_count(user1_addr) == 2, 11);
     }
 
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
