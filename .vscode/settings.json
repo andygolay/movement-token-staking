@@ -1,0 +1,12 @@
+{
+  "[move]": {
+    "editor.defaultFormatter": "aptoslabs.move-on-aptos",
+    "editor.formatOnSave": false
+  },
+  "move-on-aptos.movefmt.extraArgs": ["--config", "max_width=100"],
+  "move-on-aptos.diagnostics.disabled": [
+    "replace-with-method-call",
+    "replace-with-index-expr",
+    "replace-with-compound-expr"
+  ]
+}
