@@ -86,7 +86,6 @@ module movement_staking::nft_staking
     struct StakedNFTInfo has store, drop, copy {
         nft_object_address: address,
         collection_addr: address,
-        token_addr: address,
         staked_at: u64,
     }
 
@@ -319,7 +318,7 @@ module movement_staking::nft_staking
             // Calculate seed for the reward treasury using collection address + token address
             // This must match the seed generation in stake_token
             let seed = to_bytes(&nft_info.collection_addr);
-            let seed2 = to_bytes(&nft_info.token_addr);
+            let seed2 = to_bytes(&nft_info.nft_object_address);
             // Concatenate the byte vectors
             let combined_seed = vector::empty<u8>();
             vector::append(&mut combined_seed, seed);
@@ -471,80 +470,8 @@ module movement_staking::nft_staking
     public entry fun stake_token(
         staker: &signer,
         nft: Object<Token>,
-    ) acquires MovementStaking, ResourceInfo, MovementReward, StakedNFTsRegistry, SeedResourceInfo {
-        let staker_addr = signer::address_of(staker);
-        // verify ownership of the token
-        assert!(object::owner(nft) == staker_addr, ENO_TOKEN_IN_TOKEN_STORE);
-        // derive creator from token (DA standard)
-        let creator_addr = token::creator(nft);
-        // verify the collection exists by getting the collection address directly
-        let collection_addr = token::collection_object(nft);
-        let collection_addr = object::object_address(&collection_addr);
-        assert!(object::is_object(collection_addr), ENO_COLLECTION);
-        // staking pool
-        let staking_address = get_resource_address(creator_addr, collection_addr);
-        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);
-        let staking_data = borrow_global<MovementStaking>(staking_address);
-        assert!(staking_data.state, ESTOPPED);
-        // seed for reward vault mapping: collection address + token address
-        let token_addr = object::object_address(&nft);
-        let seed = to_bytes(&collection_addr);
-        let seed2 = to_bytes(&token_addr);
-        // Concatenate the byte vectors
-        let combined_seed = vector::empty<u8>();
-        vector::append(&mut combined_seed, seed);
-        vector::append(&mut combined_seed, seed2);
-        //allowing restaking
-        let should_pass_restake = check_map_by_seed(staker_addr, combined_seed);
-        if (should_pass_restake) {
-            let reward_treasury_address = get_resource_address_by_seed(staker_addr, combined_seed);
-            assert!(exists<MovementReward>(reward_treasury_address), ENO_STAKING);
-            let reward_data = borrow_global_mut<MovementReward>(reward_treasury_address);
-            let now = aptos_framework::timestamp::now_seconds();
-            reward_data.tokens=1;
-            reward_data.start_time=now;
-            reward_data.withdraw_amount=0;
-            reward_data.token_address = object::object_address(&nft);
-            object::transfer(staker, nft, reward_treasury_address);
-
-        } else {
-            let (reward_treasury, reward_treasury_cap) = account::create_resource_account(staker, combined_seed); //resource account to store funds and data
-            let reward_treasury_signer_from_cap = account::create_signer_with_capability(&reward_treasury_cap);
-            let reward_treasury_address = signer::address_of(&reward_treasury);
-            assert!(!exists<MovementReward>(reward_treasury_address), ESTAKING_EXISTS);
-            create_add_resource_info_by_seed(staker, combined_seed, reward_treasury_address);
-            let now = aptos_framework::timestamp::now_seconds();
-            let token_addr = object::object_address(&nft);
-            object::transfer(staker, nft, reward_treasury_address);
-            move_to<MovementReward>(&reward_treasury_signer_from_cap , MovementReward{
-            staker: staker_addr,
-            collection: collection_addr,
-            token_address: token_addr,
-            withdraw_amount: 0,
-            treasury_cap: reward_treasury_cap,
-            start_time: now,
-            tokens: 1,
-            });
-        };
-
-        // Register the staked NFT
-        let staked_nft_info = StakedNFTInfo {
-            nft_object_address: token_addr,
-            collection_addr,
-            token_addr,
-            staked_at: aptos_framework::timestamp::now_seconds(),
-        };
-        
-        // Get the global registry (must exist)
-        let registry = borrow_global_mut<StakedNFTsRegistry>(@movement_staking);
-        
-        // Get or create the user's staked NFTs vector
-        if (!smart_table::contains(&registry.staked_nfts, staker_addr)) {
-            smart_table::add(&mut registry.staked_nfts, staker_addr, vector::empty<StakedNFTInfo>());
-        };
-        
-        let staked_nfts = smart_table::borrow_mut(&mut registry.staked_nfts, staker_addr);
-        vector::push_back(staked_nfts, staked_nft_info);
+    ) acquires MovementStaking, ResourceInfo, StakedNFTsRegistry, SeedResourceInfo {
+        batch_stake_tokens(staker, vector[nft])
     }
 
     /// Stakes multiple NFT tokens in a single transaction for efficiency
@@ -620,7 +547,6 @@ module movement_staking::nft_staking
             let staked_nft_info = StakedNFTInfo {
                 nft_object_address: token_addr,
                 collection_addr,
-                token_addr,
                 staked_at: timestamp::now_seconds(),
             };
             
