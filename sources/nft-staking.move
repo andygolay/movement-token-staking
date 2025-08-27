@@ -318,7 +318,7 @@ module movement_staking::nft_staking
             // Calculate seed for the reward treasury using collection address + token address
             // This must match the seed generation in stake_token
             let seed = to_bytes(&nft_info.collection_addr);
-            let seed2 = to_bytes(&nft_info.token_addr);
+            let seed2 = to_bytes(&nft_info.nft_object_address);
             // Concatenate the byte vectors
             let combined_seed = vector::empty<u8>();
             vector::append(&mut combined_seed, seed);
