@@ -470,7 +470,7 @@ module movement_staking::nft_staking
     public entry fun stake_token(
         staker: &signer,
         nft: Object<Token>,
-    ) acquires MovementStaking, ResourceInfo, StakedNFTsRegistry, SeedResourceInfo {
+    ) acquires MovementStaking, ResourceInfo, StakedNFTsRegistry, SeedResourceInfo, MovementReward {
         batch_stake_tokens(staker, vector[nft])
     }
 
@@ -478,7 +478,7 @@ module movement_staking::nft_staking
     public entry fun batch_stake_tokens(
         staker: &signer,
         nfts: vector<Object<Token>>,
-    ) acquires StakedNFTsRegistry, MovementStaking, ResourceInfo, SeedResourceInfo {
+    ) acquires StakedNFTsRegistry, MovementStaking, ResourceInfo, SeedResourceInfo, MovementReward {
         let staker_addr = signer::address_of(staker);
         let nft_count = vector::length(&nfts);
         
@@ -524,24 +524,39 @@ module movement_staking::nft_staking
             vector::append(&mut combined_seed, seed);
             vector::append(&mut combined_seed, seed2);
             
-            // Create reward treasury for this token
-            let (reward_treasury, reward_treasury_cap) = account::create_resource_account(staker, combined_seed);
-            let reward_treasury_signer_from_cap = account::create_signer_with_capability(&reward_treasury_cap);
-            let reward_treasury_address = signer::address_of(&reward_treasury);
-            assert!(!exists<MovementReward>(reward_treasury_address), ESTAKING_EXISTS);
-            create_add_resource_info_by_seed(staker, combined_seed, reward_treasury_address);
-            let now = timestamp::now_seconds();
-            let token_addr = object::object_address(&nft);
-            object::transfer(staker, nft, reward_treasury_address);
-            move_to<MovementReward>(&reward_treasury_signer_from_cap, MovementReward {
-                staker: staker_addr,
-                collection: collection_addr,
-                token_address: token_addr,
-                withdraw_amount: 0,
-                treasury_cap: reward_treasury_cap,
-                start_time: now,
-                tokens: 1,
-            });
+            // Check for restaking (if reward vault already exists)
+            let should_pass_restake = check_map_by_seed(staker_addr, combined_seed);
+            if (should_pass_restake) {
+                // Restaking: reuse existing reward vault
+                let reward_treasury_address = get_resource_address_by_seed(staker_addr, combined_seed);
+                assert!(exists<MovementReward>(reward_treasury_address), ENO_STAKING);
+                let reward_data = borrow_global_mut<MovementReward>(reward_treasury_address);
+                let now = timestamp::now_seconds();
+                reward_data.tokens = 1;
+                reward_data.start_time = now;
+                reward_data.withdraw_amount = 0;
+                reward_data.token_address = object::object_address(&nft);
+                object::transfer(staker, nft, reward_treasury_address);
+            } else {
+                // First time staking: create new reward vault
+                let (reward_treasury, reward_treasury_cap) = account::create_resource_account(staker, combined_seed);
+                let reward_treasury_signer_from_cap = account::create_signer_with_capability(&reward_treasury_cap);
+                let reward_treasury_address = signer::address_of(&reward_treasury);
+                assert!(!exists<MovementReward>(reward_treasury_address), ESTAKING_EXISTS);
+                create_add_resource_info_by_seed(staker, combined_seed, reward_treasury_address);
+                let now = timestamp::now_seconds();
+                let token_addr = object::object_address(&nft);
+                object::transfer(staker, nft, reward_treasury_address);
+                move_to<MovementReward>(&reward_treasury_signer_from_cap, MovementReward {
+                    staker: staker_addr,
+                    collection: collection_addr,
+                    token_address: token_addr,
+                    withdraw_amount: 0,
+                    treasury_cap: reward_treasury_cap,
+                    start_time: now,
+                    tokens: 1,
+                });
+            };
             
             // Add to registry
             let staked_nft_info = StakedNFTInfo {
