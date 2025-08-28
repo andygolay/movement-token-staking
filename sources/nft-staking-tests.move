@@ -1480,6 +1480,107 @@ module movement_staking::nft_staking_tests {
         assert!(vector::length(&empty_rewards) == 0, 7);
     }
 
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
+    /// Tests the batch_claim_rewards function to ensure it can claim rewards for multiple tokens
+    /// in a single transaction, which is more efficient than multiple individual claim calls.
+    fun test_batch_claim_rewards(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+        framework: signer,
+    ) {
+        let creator_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        
+        // Set up global time for testing
+        timestamp::set_time_has_started_for_testing(&framework);
+        
+        // Create accounts
+        aptos_framework::account::create_account_for_test(creator_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Initialize global registries for testing with creator as admin
+        nft_staking::test_init_registries_with_admin(&token_staking, creator_addr);
+        
+        // Initialize FA module
+        banana_a::test_init(&token_staking);
+        let metadata = banana_a::get_metadata();
+        banana_a::mint(&token_staking, creator_addr, 1000);
+        
+        // Create collection
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Batch Claim Test Collection"),
+            string::utf8(b"Batch Claim Test Collection"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Get collection object for operations
+        let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Batch Claim Test Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        
+        // Add collection to allowed list
+        nft_staking::add_allowed_collection(&creator, collection_obj);
+        
+        // Create multiple tokens
+        let token1_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Batch Claim Test Collection"),
+            string::utf8(b"desc"),
+            string::utf8(b"Batch Claim Token 1"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token2_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Batch Claim Test Collection"),
+            string::utf8(b"desc"),
+            string::utf8(b"Batch Claim Token 2"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        let token1_addr = object::address_from_constructor_ref(&token1_ref);
+        let token2_addr = object::address_from_constructor_ref(&token2_ref);
+        
+        // Transfer tokens to receiver
+        object::transfer(&creator, object::address_to_object<Token>(token1_addr), receiver_addr);
+        object::transfer(&creator, object::address_to_object<Token>(token2_addr), receiver_addr);
+        
+        // Create staking pool
+        nft_staking::create_staking(&creator, 20, collection_obj, 500, metadata, false);
+        
+        // Stake both tokens
+        nft_staking::stake_token(&receiver, object::address_to_object<Token>(token1_addr));
+        nft_staking::stake_token(&receiver, object::address_to_object<Token>(token2_addr));
+        
+        // Advance time by 1 day to accrue rewards
+        timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
+        
+        // Check balance before claiming
+        let balance_before = primary_fungible_store::balance(receiver_addr, metadata);
+        
+        // Create vector of tokens to batch claim
+        let tokens_to_claim = vector::empty<object::Object<Token>>();
+        vector::push_back(&mut tokens_to_claim, object::address_to_object<Token>(token1_addr));
+        vector::push_back(&mut tokens_to_claim, object::address_to_object<Token>(token2_addr));
+        
+        // Batch claim rewards for both tokens
+        nft_staking::batch_claim_rewards(&receiver, tokens_to_claim);
+        
+        // Check balance after claiming
+        let balance_after = primary_fungible_store::balance(receiver_addr, metadata);
+        
+        // Verify rewards were received (should be 20 * 2 = 40 total rewards)
+        assert!(balance_after > balance_before, 1);
+        assert!(balance_after - balance_before == 40, 2); // 20 DPR * 1 day * 2 tokens = 40
+        
+        // Verify both tokens are still staked (not unstaked)
+        assert!(object::owner(object::address_to_object<Token>(token1_addr)) != receiver_addr, 3);
+        assert!(object::owner(object::address_to_object<Token>(token2_addr)) != receiver_addr, 4);
+    }
+
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
     fun test_is_staking_enabled(
         creator: signer,

@@ -761,6 +761,25 @@ module movement_staking::nft_staking
         reward_data.withdraw_amount=reward_data.withdraw_amount+release_amount;
     }
 
+    /// Claims accumulated staking rewards for multiple staked tokens in a single transaction
+    public entry fun batch_claim_rewards(
+        staker: &signer,
+        token_objs: vector<Object<Token>>,
+    ) acquires MovementStaking, MovementReward, ResourceInfo, SeedResourceInfo {
+        let token_count = vector::length(&token_objs);
+        
+        // Ensure we have at least one token to claim rewards for
+        assert!(token_count > 0, ENO_TOKEN_IN_TOKEN_STORE);
+        
+        // Claim rewards for each token individually
+        let i = 0;
+        while (i < token_count) {
+            let token_obj = *vector::borrow(&token_objs, i);
+            claim_reward(staker, token_obj);
+            i = i + 1;
+        };
+    }
+
     /// Internal function containing the core unstaking logic
     fun unstake_token_internal(
         staker: &signer, 
