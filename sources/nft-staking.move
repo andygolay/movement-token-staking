@@ -572,6 +572,25 @@ module movement_staking::nft_staking
         };
     }
 
+    /// Unstakes multiple NFT tokens in a single transaction for efficiency
+    public entry fun batch_unstake_tokens(
+        staker: &signer,
+        nfts: vector<Object<Token>>,
+    ) acquires MovementStaking, ResourceInfo, MovementReward, StakedNFTsRegistry, SeedResourceInfo {
+        let nft_count = vector::length(&nfts);
+        
+        // Ensure we have at least one NFT to unstake
+        assert!(nft_count > 0, ENO_TOKEN_IN_TOKEN_STORE);
+        
+        // Unstake each NFT individually using the existing unstake_token logic
+        let i = 0;
+        while (i < nft_count) {
+            let nft = *vector::borrow(&nfts, i);
+            unstake_token_internal(staker, nft);
+            i = i + 1;
+        };
+    }
+
 
 
 
@@ -622,11 +641,11 @@ module movement_staking::nft_staking
         reward_data.withdraw_amount=reward_data.withdraw_amount+release_amount;
     }
 
-    /// Unstakes an NFT token, claims final rewards, and returns the token to the staker
-    public entry fun unstake_token (   
+    /// Internal function containing the core unstaking logic
+    fun unstake_token_internal(
         staker: &signer, 
         token_obj: Object<Token>,
-    )acquires MovementStaking, MovementReward, ResourceInfo, StakedNFTsRegistry, SeedResourceInfo {
+    ) acquires MovementStaking, MovementReward, ResourceInfo, StakedNFTsRegistry, SeedResourceInfo {
         let staker_addr = signer::address_of(staker);
         //verifying whether the creator has started the staking or not
         let creator_addr = token::creator(token_obj);
@@ -678,6 +697,14 @@ module movement_staking::nft_staking
                 };
             };
         };
+    }
+
+    /// Unstakes an NFT token, claims final rewards, and returns the token to the staker
+    public entry fun unstake_token (   
+        staker: &signer, 
+        token_obj: Object<Token>,
+    ) acquires MovementStaking, MovementReward, ResourceInfo, StakedNFTsRegistry, SeedResourceInfo {
+        unstake_token_internal(staker, token_obj);
     }
 
     // Helper functions

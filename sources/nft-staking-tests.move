@@ -1059,9 +1059,13 @@ module movement_staking::nft_staking_tests {
         assert!(balance_after > balance_before, 5);
         assert!(primary_fungible_store::is_frozen(user1_addr, metadata), 6);
         
-        // Unstake both tokens
-        nft_staking::unstake_token(&user1, object::address_to_object<Token>(token1_addr));
-        nft_staking::unstake_token(&user1, object::address_to_object<Token>(token2_addr));
+        // Create vector of NFTs to batch unstake
+        let nfts_to_unstake = vector::empty<object::Object<Token>>();
+        vector::push_back(&mut nfts_to_unstake, object::address_to_object<Token>(token1_addr));
+        vector::push_back(&mut nfts_to_unstake, object::address_to_object<Token>(token2_addr));
+        
+        // Batch unstake both tokens
+        nft_staking::batch_unstake_tokens(&user1, nfts_to_unstake);
         
         // Verify tokens are returned to user1
         assert!(object::owner(object::address_to_object<Token>(token1_addr)) == user1_addr, 7);
