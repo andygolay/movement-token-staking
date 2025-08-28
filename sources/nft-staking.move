@@ -345,10 +345,9 @@ module movement_staking::nft_staking
                         // Calculate accumulated rewards
                         let now = timestamp::now_seconds();
                         let time_diff = now - reward_data.start_time;
-                        let days = time_diff / 86400; // Convert seconds to days
                         
-                        // Calculate rewards: (dpr * days * tokens) - withdraw_amount
-                        let earned_rewards = (staking_data.dpr * days * reward_data.tokens);
+                        // Calculate rewards: (time_diff * dpr * tokens) / 86400 - withdraw_amount
+                        let earned_rewards = ((time_diff * staking_data.dpr * reward_data.tokens) / 86400);
                         let net_rewards = if (earned_rewards > reward_data.withdraw_amount) {
                             earned_rewards - reward_data.withdraw_amount
                         } else {
@@ -621,15 +620,22 @@ module movement_staking::nft_staking
         assert!(exists<MovementReward>(reward_treasury_address), ENO_STAKING);
         let reward_data = borrow_global_mut<MovementReward>(reward_treasury_address);
         assert!(reward_data.staker==staker_addr, ESTAKER_MISMATCH);
-        let dpr = staking_data.dpr;
+        
+        // Calculate rewards consistently with the helper function logic
         let now = timestamp::now_seconds();
-        let reward = (((now-reward_data.start_time)*dpr)/86400)*reward_data.tokens;
-        let release_amount = reward - reward_data.withdraw_amount;
+        let time_diff = now - reward_data.start_time;
+        let earned_rewards = ((time_diff * staking_data.dpr * reward_data.tokens) / 86400);
+        let release_amount = if (earned_rewards > reward_data.withdraw_amount) {
+            earned_rewards - reward_data.withdraw_amount
+        } else {
+            0
+        };
         if (staking_data.amount<release_amount)
         {
             staking_data.state=false;
             assert!(staking_data.amount>release_amount, EINSUFFICIENT_FUND);
         };
+        
         primary_fungible_store::transfer(&staking_treasury_signer_from_cap, staking_data.metadata, staker_addr, release_amount);
         
         // Conditionally freeze the user's account for the claimed rewards (making them soulbound)

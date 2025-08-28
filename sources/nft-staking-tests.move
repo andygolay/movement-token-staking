@@ -1271,7 +1271,18 @@ module movement_staking::nft_staking_tests {
         assert!(rewards_after_staking_a == 0, 3);
         assert!(rewards_after_staking_b == 0, 4);
         
-        // Advance time by 1 day (86400 seconds)
+        // Advance time by 0.5 days (12 hours = 43200 seconds) to test continuous rewards
+        timestamp::update_global_time_for_test(43200 * 1000000); // microseconds
+        
+        // Calculate expected rewards after 0.5 days (continuous calculation):
+        // Collection A (banana_a): 20 DPR * 0.5 days * 1 token = 10
+        // Collection B (banana_b): 30 DPR * 0.5 days * 1 token = 15
+        let rewards_after_half_day_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
+        let rewards_after_half_day_b = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
+        assert!(rewards_after_half_day_a == 10, 5);
+        assert!(rewards_after_half_day_b == 15, 6);
+        
+        // Advance time by another 0.5 days (cumulative: 1 day total)
         timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
         
         // Calculate expected rewards after 1 day:
@@ -1279,8 +1290,8 @@ module movement_staking::nft_staking_tests {
         // Collection B (banana_b): 30 DPR * 1 day * 1 token = 30
         let rewards_after_1_day_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
         let rewards_after_1_day_b = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
-        assert!(rewards_after_1_day_a == 20, 5);
-        assert!(rewards_after_1_day_b == 30, 6);
+        assert!(rewards_after_1_day_a == 20, 7);
+        assert!(rewards_after_1_day_b == 30, 8);
         
         // Advance time by another day (cumulative: 2 days total)
         timestamp::update_global_time_for_test(2 * 86400 * 1000000); // microseconds
@@ -1290,14 +1301,14 @@ module movement_staking::nft_staking_tests {
         // Collection B (banana_b): 30 DPR * 2 days * 1 token = 60
         let rewards_after_2_days_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
         let rewards_after_2_days_b = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
-        assert!(rewards_after_2_days_a == 40, 7);
-        assert!(rewards_after_2_days_b == 60, 8);
+        assert!(rewards_after_2_days_a == 40, 9);
+        assert!(rewards_after_2_days_b == 60, 10);
         
         // Test the helper function to get metadata types
         let metadata_types = nft_staking::get_user_reward_metadata_types(receiver_addr);
-        assert!(vector::length(&metadata_types) == 2, 9); // Should have both banana_a and banana_b
-        assert!(vector::contains(&metadata_types, &banana_a_metadata), 10);
-        assert!(vector::contains(&metadata_types, &banana_b_metadata), 11);
+        assert!(vector::length(&metadata_types) == 2, 11); // Should have both banana_a and banana_b
+        assert!(vector::contains(&metadata_types, &banana_a_metadata), 12);
+        assert!(vector::contains(&metadata_types, &banana_b_metadata), 13);
         
         // Claim rewards from Collection A (banana_a)
         nft_staking::claim_reward(&receiver, object::address_to_object<Token>(token_a_addr));
@@ -1305,8 +1316,8 @@ module movement_staking::nft_staking_tests {
         // After claiming, banana_a rewards should be reduced, banana_b should be unchanged
         let rewards_after_claiming_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
         let rewards_after_claiming_b = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
-        assert!(rewards_after_claiming_a == 0, 12); // Collection A rewards claimed
-        assert!(rewards_after_claiming_b == 60, 13); // Collection B rewards unchanged
+        assert!(rewards_after_claiming_a == 0, 14); // Collection A rewards claimed
+        assert!(rewards_after_claiming_b == 60, 15); // Collection B rewards unchanged
         
         // Unstake Collection B token (this resets reward data)
         nft_staking::unstake_token(&receiver, object::address_to_object<Token>(token_b_addr));
@@ -1314,24 +1325,24 @@ module movement_staking::nft_staking_tests {
         // After unstaking, rewards are reset to 0 for Collection B
         let rewards_after_unstaking_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
         let rewards_after_unstaking_b = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
-        assert!(rewards_after_unstaking_a == 0, 14); // Collection A still 0
-        assert!(rewards_after_unstaking_b == 0, 15); // Collection B reset to 0 after unstaking
+        assert!(rewards_after_unstaking_a == 0, 16); // Collection A still 0
+        assert!(rewards_after_unstaking_b == 0, 17); // Collection B reset to 0 after unstaking
         
         // Advance time again - Collection A continues accruing, Collection B doesn't (unstaked)
         timestamp::update_global_time_for_test(3 * 86400 * 1000000); // microseconds (cumulative: 3 days total)
         let rewards_after_more_time_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
         let rewards_after_more_time_b = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_b_metadata);
         // Collection A: 20 DPR * 3 days * 1 token = 60 total, minus 40 withdrawn = 20 remaining
-        assert!(rewards_after_more_time_a == 20, 16); // Collection A continues accruing
-        assert!(rewards_after_more_time_b == 0, 17); // Collection B still 0 (unstaked)
+        assert!(rewards_after_more_time_a == 20, 18); // Collection A continues accruing
+        assert!(rewards_after_more_time_b == 0, 19); // Collection B still 0 (unstaked)
         
         // Test with user who has no staked NFTs
         let no_stakes_user = @0x999;
         aptos_framework::account::create_account_for_test(no_stakes_user);
         let rewards_no_stakes_a = nft_staking::get_user_accumulated_rewards(no_stakes_user, banana_a_metadata);
         let rewards_no_stakes_b = nft_staking::get_user_accumulated_rewards(no_stakes_user, banana_b_metadata);
-        assert!(rewards_no_stakes_a == 0, 18);
-        assert!(rewards_no_stakes_b == 0, 19);
+        assert!(rewards_no_stakes_a == 0, 20);
+        assert!(rewards_no_stakes_b == 0, 21);
     }
 
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]
