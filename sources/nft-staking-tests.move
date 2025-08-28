@@ -317,7 +317,7 @@ module movement_staking::nft_staking_tests {
         assert!(!primary_fungible_store::is_frozen(receiver_addr, metadata), 1);
         
         // Claim rewards (this should trigger freezing via freeze_registry)
-        nft_staking::claim_reward(&receiver, collection_obj, freeze_test_token_obj, creator_addr);
+        nft_staking::claim_reward(&receiver, freeze_test_token_obj);
         
         // Verify account is frozen after claiming (freeze_registry should have been called)
         assert!(primary_fungible_store::is_frozen(receiver_addr, metadata), 2);
@@ -391,7 +391,7 @@ module movement_staking::nft_staking_tests {
         let balance_before = primary_fungible_store::balance(receiver_addr, metadata);
         
         // Claim rewards
-        nft_staking::claim_reward(&receiver, collection_obj, object::address_to_object<Token>(token_addr), sender_addr);
+        nft_staking::claim_reward(&receiver, object::address_to_object<Token>(token_addr));
         
         // Verify rewards were received and account is frozen (soulbound)
         let balance_after = primary_fungible_store::balance(receiver_addr, metadata);
@@ -399,7 +399,7 @@ module movement_staking::nft_staking_tests {
         assert!(primary_fungible_store::is_frozen(receiver_addr, metadata), 3);
         
         // Unstake the token
-        nft_staking::unstake_token(&receiver, sender_addr, collection_obj, object::address_to_object<Token>(token_addr));
+        nft_staking::unstake_token(&receiver, object::address_to_object<Token>(token_addr));
         
         // Verify token is returned to receiver
         assert!(object::owner(object::address_to_object<Token>(token_addr)) == receiver_addr, 4);
@@ -473,7 +473,7 @@ module movement_staking::nft_staking_tests {
         let balance_before = primary_fungible_store::balance(receiver_addr, metadata);
         
         // Claim rewards
-        nft_staking::claim_reward(&receiver, collection_obj, object::address_to_object<Token>(token_addr), sender_addr);
+        nft_staking::claim_reward(&receiver, object::address_to_object<Token>(token_addr));
         
         // Verify rewards were received but account is NOT frozen (no soulbound)
         let balance_after = primary_fungible_store::balance(receiver_addr, metadata);
@@ -481,7 +481,7 @@ module movement_staking::nft_staking_tests {
         assert!(!primary_fungible_store::is_frozen(receiver_addr, metadata), 3);
         
         // Unstake the token
-        nft_staking::unstake_token(&receiver, sender_addr, collection_obj, object::address_to_object<Token>(token_addr));
+        nft_staking::unstake_token(&receiver, object::address_to_object<Token>(token_addr));
         
         // Verify token is returned to receiver
         assert!(object::owner(object::address_to_object<Token>(token_addr)) == receiver_addr, 4);
@@ -701,8 +701,8 @@ module movement_staking::nft_staking_tests {
         timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
         
         // Claim rewards for both tokens
-        nft_staking::claim_reward(&receiver, collection_a_obj, object::address_to_object<Token>(token_a_addr), sender_addr);
-        nft_staking::claim_reward(&receiver, collection_b_obj, object::address_to_object<Token>(token_b_addr), sender_addr);
+        nft_staking::claim_reward(&receiver, object::address_to_object<Token>(token_a_addr));
+        nft_staking::claim_reward(&receiver, object::address_to_object<Token>(token_b_addr));
         
         // Verify that both accounts are frozen after claiming rewards (soulbound)
         assert!(primary_fungible_store::is_frozen(receiver_addr, banana_a_metadata), 1);
@@ -715,8 +715,8 @@ module movement_staking::nft_staking_tests {
         assert!(banana_b_balance > 0, 4);
         
         // Unstake both tokens (should work even with frozen accounts thanks to transfer_with_ref)
-        nft_staking::unstake_token(&receiver, sender_addr, collection_a_obj, object::address_to_object<Token>(token_a_addr));
-        nft_staking::unstake_token(&receiver, sender_addr, collection_b_obj, object::address_to_object<Token>(token_b_addr));
+        nft_staking::unstake_token(&receiver, object::address_to_object<Token>(token_a_addr));
+        nft_staking::unstake_token(&receiver, object::address_to_object<Token>(token_b_addr));
         
         // Verify tokens are returned
         assert!(object::owner(object::address_to_object<Token>(token_a_addr)) == receiver_addr, 5);
@@ -818,8 +818,8 @@ module movement_staking::nft_staking_tests {
         timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
         
         // Claim rewards for both tokens
-        nft_staking::claim_reward(&receiver, collection_c_obj, object::address_to_object<Token>(token_a_addr), sender_addr);
-        nft_staking::claim_reward(&receiver, collection_d_obj, object::address_to_object<Token>(token_b_addr), sender_addr);
+        nft_staking::claim_reward(&receiver, object::address_to_object<Token>(token_a_addr));
+        nft_staking::claim_reward(&receiver, object::address_to_object<Token>(token_b_addr));
         
         // Verify that both accounts are NOT frozen after claiming rewards (no soulbound)
         assert!(!primary_fungible_store::is_frozen(receiver_addr, banana_a_metadata), 1);
@@ -832,8 +832,8 @@ module movement_staking::nft_staking_tests {
         assert!(banana_b_balance > 0, 4);
         
         // Unstake both tokens (should work normally since accounts are not frozen)
-        nft_staking::unstake_token(&receiver, sender_addr, collection_c_obj, object::address_to_object<Token>(token_a_addr));
-        nft_staking::unstake_token(&receiver, sender_addr, collection_d_obj, object::address_to_object<Token>(token_b_addr));
+        nft_staking::unstake_token(&receiver, object::address_to_object<Token>(token_a_addr));
+        nft_staking::unstake_token(&receiver, object::address_to_object<Token>(token_b_addr));
         
         // Verify tokens are returned
         assert!(object::owner(object::address_to_object<Token>(token_a_addr)) == receiver_addr, 5);
@@ -943,15 +943,15 @@ module movement_staking::nft_staking_tests {
         assert!(vector::length(&user2_nfts) == 1, 6);
         
         // Unstake one token from user1
-        nft_staking::unstake_token(&user1, creator_addr, collection_obj, object::address_to_object<Token>(token1_addr));
+        nft_staking::unstake_token(&user1, object::address_to_object<Token>(token1_addr));
         
         // Verify registry is updated after unstaking
         assert!(nft_staking::get_staked_nfts_count(user1_addr) == 1, 7);
         assert!(nft_staking::get_staked_nfts_count(user2_addr) == 1, 8); // User2 unchanged
         
         // Unstake remaining tokens
-        nft_staking::unstake_token(&user1, creator_addr, collection_obj, object::address_to_object<Token>(token2_addr));
-        nft_staking::unstake_token(&user2, creator_addr, collection_obj, object::address_to_object<Token>(token3_addr));
+        nft_staking::unstake_token(&user1, object::address_to_object<Token>(token2_addr));
+        nft_staking::unstake_token(&user2, object::address_to_object<Token>(token3_addr));
         
         // Verify registry is properly cleaned up
         assert!(nft_staking::get_staked_nfts_count(user1_addr) == 0, 9);
@@ -1052,7 +1052,7 @@ module movement_staking::nft_staking_tests {
         let balance_before = primary_fungible_store::balance(user1_addr, metadata);
         
         // Claim rewards for first token only (account will be frozen after this)
-        nft_staking::claim_reward(&user1, collection_obj, object::address_to_object<Token>(token1_addr), creator_addr);
+        nft_staking::claim_reward(&user1, object::address_to_object<Token>(token1_addr));
         
         // Verify rewards were received and account is frozen (soulbound)
         let balance_after = primary_fungible_store::balance(user1_addr, metadata);
@@ -1060,8 +1060,8 @@ module movement_staking::nft_staking_tests {
         assert!(primary_fungible_store::is_frozen(user1_addr, metadata), 6);
         
         // Unstake both tokens
-        nft_staking::unstake_token(&user1, creator_addr, collection_obj, object::address_to_object<Token>(token1_addr));
-        nft_staking::unstake_token(&user1, creator_addr, collection_obj, object::address_to_object<Token>(token2_addr));
+        nft_staking::unstake_token(&user1, object::address_to_object<Token>(token1_addr));
+        nft_staking::unstake_token(&user1, object::address_to_object<Token>(token2_addr));
         
         // Verify tokens are returned to user1
         assert!(object::owner(object::address_to_object<Token>(token1_addr)) == user1_addr, 7);
@@ -1160,7 +1160,7 @@ module movement_staking::nft_staking_tests {
         // Note: We can't access struct fields directly from test module, but we can verify the vector contains data
         
         // Unstake the token
-        nft_staking::unstake_token(&receiver, creator_addr, collection_obj, object::address_to_object<Token>(token_addr));
+        nft_staking::unstake_token(&receiver, object::address_to_object<Token>(token_addr));
         
         // Test view functions after unstaking
         assert!(nft_staking::get_staked_nfts_count(receiver_addr) == 0, 5);
@@ -1296,7 +1296,7 @@ module movement_staking::nft_staking_tests {
         assert!(vector::contains(&metadata_types, &banana_b_metadata), 11);
         
         // Claim rewards from Collection A (banana_a)
-        nft_staking::claim_reward(&receiver, collection_a_obj, object::address_to_object<Token>(token_a_addr), creator_addr);
+        nft_staking::claim_reward(&receiver, object::address_to_object<Token>(token_a_addr));
         
         // After claiming, banana_a rewards should be reduced, banana_b should be unchanged
         let rewards_after_claiming_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);
@@ -1305,7 +1305,7 @@ module movement_staking::nft_staking_tests {
         assert!(rewards_after_claiming_b == 60, 13); // Collection B rewards unchanged
         
         // Unstake Collection B token (this resets reward data)
-        nft_staking::unstake_token(&receiver, creator_addr, collection_b_obj, object::address_to_object<Token>(token_b_addr));
+        nft_staking::unstake_token(&receiver, object::address_to_object<Token>(token_b_addr));
         
         // After unstaking, rewards are reset to 0 for Collection B
         let rewards_after_unstaking_a = nft_staking::get_user_accumulated_rewards(receiver_addr, banana_a_metadata);

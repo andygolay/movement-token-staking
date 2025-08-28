@@ -529,7 +529,7 @@ module movement_staking::nft_staking
         // Register the staked NFT
         let staked_nft_info = StakedNFTInfo {
             nft_object_address: token_addr,
-            collection_addr: collection_addr,
+            collection_addr,
             staked_at: timestamp::now_seconds(),
         };
         
@@ -578,14 +578,14 @@ module movement_staking::nft_staking
     /// Claims accumulated staking rewards for a specific staked token
     public entry fun claim_reward(
         staker: &signer, 
-        collection_obj: Object<Collection>, //the collection object owned by Creator 
         token_obj: Object<Token>,
-        creator: address,
     ) acquires MovementStaking, MovementReward, ResourceInfo, SeedResourceInfo {
         let staker_addr = signer::address_of(staker);
         //verifying whether the creator has started the staking or not
+        let collection_obj = token::collection_object(token_obj);
         let collection_addr = object::object_address(&collection_obj);
-        let staking_address = get_resource_address(creator, collection_addr);
+        let creator_addr = token::creator(token_obj);
+        let staking_address = get_resource_address(creator_addr, collection_addr);
         assert!(exists<MovementStaking>(staking_address), ENO_STAKING);// the staking doesn't exists
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         let staking_treasury_signer_from_cap = account::create_signer_with_capability(&staking_data.treasury_cap);
@@ -625,14 +625,14 @@ module movement_staking::nft_staking
     /// Unstakes an NFT token, claims final rewards, and returns the token to the staker
     public entry fun unstake_token (   
         staker: &signer, 
-        creator: address,
-        collection_obj: Object<Collection>,
         token_obj: Object<Token>,
     )acquires MovementStaking, MovementReward, ResourceInfo, StakedNFTsRegistry, SeedResourceInfo {
         let staker_addr = signer::address_of(staker);
         //verifying whether the creator has started the staking or not
+        let creator_addr = token::creator(token_obj);
+        let collection_obj = token::collection_object(token_obj);
         let collection_addr = object::object_address(&collection_obj);
-        let staking_address = get_resource_address(creator, collection_addr);
+        let staking_address = get_resource_address(creator_addr, collection_addr);
         assert!(exists<MovementStaking>(staking_address), ENO_STAKING);// the staking doesn't exists
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         assert!(staking_data.state, ESTOPPED);
