@@ -1343,6 +1343,141 @@ module movement_staking::nft_staking_tests {
         let rewards_no_stakes_b = nft_staking::get_user_accumulated_rewards(no_stakes_user, banana_b_metadata);
         assert!(rewards_no_stakes_a == 0, 20);
         assert!(rewards_no_stakes_b == 0, 21);
+        
+        // Test the new get_all_user_accumulated_rewards function
+        let all_rewards = nft_staking::get_all_user_accumulated_rewards(receiver_addr);
+        assert!(vector::length(&all_rewards) == 1, 22); // Only Collection A should have rewards (Collection B was unstaked)
+        
+        // Check the rewards for Collection A
+        let reward_info_a = vector::borrow(&all_rewards, 0);
+        assert!(nft_staking::get_rewards(reward_info_a) == 20, 23); // Should be 20 rewards for Collection A
+        assert!(nft_staking::get_fa_address(reward_info_a) == object::object_address(&banana_a_metadata), 24); // Should match banana_a metadata address
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
+    fun test_get_all_user_accumulated_rewards(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+        framework: signer,
+    ) {
+        let creator_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+        
+        // Set up global time for testing
+        timestamp::set_time_has_started_for_testing(&framework);
+        
+        // Create accounts
+        aptos_framework::account::create_account_for_test(creator_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+        
+        // Initialize global registries for testing with creator as admin
+        nft_staking::test_init_registries_with_admin(&token_staking, creator_addr);
+        
+        // Initialize both FA modules
+        banana_a::test_init(&token_staking);
+        banana_b::test_init(&token_staking);
+        let banana_a_metadata = banana_a::get_metadata();
+        let banana_b_metadata = banana_b::get_metadata();
+        banana_a::mint(&token_staking, creator_addr, 1000);
+        banana_b::mint(&token_staking, creator_addr, 1000);
+        
+        // Create collections
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"All Rewards Test Collection A"),
+            string::utf8(b"All Rewards Test Collection A"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"All Rewards Test Collection B"),
+            string::utf8(b"All Rewards Test Collection B"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        // Get collection objects for operations
+        let collection_a_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"All Rewards Test Collection A"));
+        let collection_a_obj = object::address_to_object<Collection>(collection_a_addr);
+        let collection_b_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"All Rewards Test Collection B"));
+        let collection_b_obj = object::address_to_object<Collection>(collection_b_addr);
+        
+        // Add collections to allowed list
+        nft_staking::add_allowed_collection(&creator, collection_a_obj);
+        nft_staking::add_allowed_collection(&creator, collection_b_obj);
+        
+        // Create staking pools with different DPRs
+        nft_staking::create_staking(&creator, 20, collection_a_obj, 500, banana_a_metadata, false);
+        nft_staking::create_staking(&creator, 30, collection_b_obj, 300, banana_b_metadata, false);
+        
+        // Create tokens
+        let token_a_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"All Rewards Test Collection A"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token A"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token_b_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"All Rewards Test Collection B"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token B"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        
+        let token_a_addr = object::address_from_constructor_ref(&token_a_ref);
+        let token_b_addr = object::address_from_constructor_ref(&token_b_ref);
+        
+        // Transfer tokens to receiver
+        object::transfer(&creator, object::address_to_object<Token>(token_a_addr), receiver_addr);
+        object::transfer(&creator, object::address_to_object<Token>(token_b_addr), receiver_addr);
+        
+        // Initially no rewards
+        let initial_all_rewards = nft_staking::get_all_user_accumulated_rewards(receiver_addr);
+        assert!(vector::length(&initial_all_rewards) == 0, 1);
+        
+        // Stake both tokens
+        nft_staking::stake_token(&receiver, object::address_to_object<Token>(token_a_addr));
+        nft_staking::stake_token(&receiver, object::address_to_object<Token>(token_b_addr));
+        
+        // Advance time by 1 day
+        timestamp::update_global_time_for_test(86400 * 1000000); // microseconds
+        
+        // Get all rewards - should have both FA types
+        let all_rewards = nft_staking::get_all_user_accumulated_rewards(receiver_addr);
+        assert!(vector::length(&all_rewards) == 2, 2);
+        
+        // Check that both FA types are present with correct rewards
+        let found_a = false;
+        let found_b = false;
+        let i = 0;
+        let rewards_len = vector::length(&all_rewards);
+        
+        while (i < rewards_len) {
+            let reward_info = vector::borrow(&all_rewards, i);
+            if (nft_staking::get_fa_address(reward_info) == object::object_address(&banana_a_metadata)) {
+                assert!(nft_staking::get_rewards(reward_info) == 20, 3); // 20 DPR * 1 day * 1 token = 20
+                found_a = true;
+            } else if (nft_staking::get_fa_address(reward_info) == object::object_address(&banana_b_metadata)) {
+                assert!(nft_staking::get_rewards(reward_info) == 30, 4); // 30 DPR * 1 day * 1 token = 30
+                found_b = true;
+            };
+            i = i + 1;
+        };
+        
+        assert!(found_a, 5); // Should find banana_a rewards
+        assert!(found_b, 6); // Should find banana_b rewards
+        
+        // Test with user who has no staked NFTs
+        let no_stakes_user = @0x888;
+        aptos_framework::account::create_account_for_test(no_stakes_user);
+        let empty_rewards = nft_staking::get_all_user_accumulated_rewards(no_stakes_user);
+        assert!(vector::length(&empty_rewards) == 0, 7);
     }
 
     #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking)]

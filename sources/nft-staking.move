@@ -89,6 +89,21 @@ module movement_staking::nft_staking
         staked_at: u64,
     }
 
+    // Info about user rewards for a specific FA
+    struct UserRewardInfo has store, drop, copy {
+        rewards: u64,
+        fa_address: address,
+    }
+
+    // Getter functions for UserRewardInfo
+    public fun get_rewards(reward_info: &UserRewardInfo): u64 {
+        reward_info.rewards
+    }
+
+    public fun get_fa_address(reward_info: &UserRewardInfo): address {
+        reward_info.fa_address
+    }
+
     // Error codes
     const ENO_COLLECTION: u64=0;
     const ESTAKING_EXISTS: u64=1;
@@ -364,6 +379,105 @@ module movement_staking::nft_staking
         };
         
         total_rewards
+    }
+
+    #[view]
+    /// Returns all accumulated rewards for a user across all FA types as a vector of UserRewardInfo
+    public fun get_all_user_accumulated_rewards(user_address: address): vector<UserRewardInfo> acquires StakedNFTsRegistry, MovementReward, MovementStaking, ResourceInfo, SeedResourceInfo {
+        // Check if user has any staked NFTs
+        let registry = borrow_global<StakedNFTsRegistry>(@movement_staking);
+        if (!smart_table::contains(&registry.staked_nfts, user_address)) {
+            return vector::empty<UserRewardInfo>()
+        };
+        
+        let staked_nfts = smart_table::borrow(&registry.staked_nfts, user_address);
+        let all_rewards = vector::empty<UserRewardInfo>();
+        let i = 0;
+        let len = vector::length(staked_nfts);
+        
+        while (i < len) {
+            let nft_info = vector::borrow(staked_nfts, i);
+            let token_obj = object::address_to_object<Token>(nft_info.nft_object_address);
+            
+            // Get staking pool data to get the metadata
+            let creator_addr = token::creator(token_obj);
+            let staking_address = get_resource_address(creator_addr, nft_info.collection_addr);
+            
+            if (exists<MovementStaking>(staking_address)) {
+                let staking_data = borrow_global<MovementStaking>(staking_address);
+                let fa_address = object::object_address(&staking_data.metadata);
+                
+                // Check if this FA is already in our result vector
+                let j = 0;
+                let rewards_len = vector::length(&all_rewards);
+                let found = false;
+                
+                while (j < rewards_len) {
+                    let existing_reward_info = vector::borrow(&all_rewards, j);
+                    if (existing_reward_info.fa_address == fa_address) {
+                        found = true;
+                        break
+                    };
+                    j = j + 1;
+                };
+                
+                if (!found) {
+                    // Calculate total rewards for this FA type across all user's tokens
+                    let total_fa_rewards = 0u64;
+                    let k = 0;
+                    let staked_len = vector::length(staked_nfts);
+                    
+                    while (k < staked_len) {
+                        let nft_info_k = vector::borrow(staked_nfts, k);
+                        let token_obj_k = object::address_to_object<Token>(nft_info_k.nft_object_address);
+                        let creator_addr_k = token::creator(token_obj_k);
+                        let staking_address_k = get_resource_address(creator_addr_k, nft_info_k.collection_addr);
+                        
+                        if (exists<MovementStaking>(staking_address_k)) {
+                            let staking_data_k = borrow_global<MovementStaking>(staking_address_k);
+                            let fa_address_k = object::object_address(&staking_data_k.metadata);
+                            
+                            // Only include tokens from the same FA type
+                            if (fa_address_k == fa_address) {
+                                let token_addr_k = object::object_address(&token_obj_k);
+                                let seed_k = to_bytes(&nft_info_k.collection_addr);
+                                let seed2_k = to_bytes(&token_addr_k);
+                                let combined_seed_k = vector::empty<u8>();
+                                vector::append(&mut combined_seed_k, seed_k);
+                                vector::append(&mut combined_seed_k, seed2_k);
+                                
+                                if (check_map_by_seed(user_address, combined_seed_k)) {
+                                    let reward_treasury_address_k = get_resource_address_by_seed(user_address, combined_seed_k);
+                                    if (exists<MovementReward>(reward_treasury_address_k)) {
+                                        let reward_data_k = borrow_global<MovementReward>(reward_treasury_address_k);
+                                        let now = timestamp::now_seconds();
+                                        let time_diff = now - reward_data_k.start_time;
+                                        let earned_rewards = ((time_diff * staking_data_k.dpr * reward_data_k.tokens) / 86400);
+                                        let token_rewards = if (earned_rewards > reward_data_k.withdraw_amount) {
+                                            earned_rewards - reward_data_k.withdraw_amount
+                                        } else {
+                                            0
+                                        };
+                                        total_fa_rewards = total_fa_rewards + token_rewards;
+                                    };
+                                };
+                            };
+                        };
+                        k = k + 1;
+                    };
+                    
+                    let reward_info = UserRewardInfo {
+                        rewards: total_fa_rewards,
+                        fa_address,
+                    };
+                    vector::push_back(&mut all_rewards, reward_info);
+                };
+            };
+            
+            i = i + 1;
+        };
+        
+        all_rewards
     }
 
     #[view]
