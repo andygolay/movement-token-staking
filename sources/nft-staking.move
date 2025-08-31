@@ -315,19 +315,17 @@ module movement_staking::nft_staking
     #[view]
     /// Returns accumulated rewards for a user for a specific fungible asset metadata
     public fun get_user_accumulated_rewards(user_address: address, metadata: Object<fungible_asset::Metadata>): u64 acquires StakedNFTsRegistry, MovementReward, MovementStaking, ResourceInfo, SeedResourceInfo {
-        // Check if user has any staked NFTs
-        let registry = borrow_global<StakedNFTsRegistry>(@movement_staking);
-        if (!smart_table::contains(&registry.staked_nfts, user_address)) {
+        // Get user staked NFTs if they exist
+        let staked_nfts = get_user_staked_nfts_if_exists(user_address);
+        if (vector::is_empty(&staked_nfts)) {
             return 0
         };
-        
-        let staked_nfts = smart_table::borrow(&registry.staked_nfts, user_address);
         let total_rewards = 0u64;
         let i = 0;
-        let len = vector::length(staked_nfts);
+        let len = vector::length(&staked_nfts);
         
         while (i < len) {
-            let nft_info = vector::borrow(staked_nfts, i);
+            let nft_info = vector::borrow(&staked_nfts, i);
             
             // Calculate seed for the reward treasury using collection address + token address
             // This must match the seed generation in stake_token
@@ -383,19 +381,17 @@ module movement_staking::nft_staking
     #[view]
     /// Returns all accumulated rewards for a user across all FA types as a vector of UserRewardInfo
     public fun get_all_user_accumulated_rewards(user_address: address): vector<UserRewardInfo> acquires StakedNFTsRegistry, MovementReward, MovementStaking, ResourceInfo, SeedResourceInfo {
-        // Check if user has any staked NFTs
-        let registry = borrow_global<StakedNFTsRegistry>(@movement_staking);
-        if (!smart_table::contains(&registry.staked_nfts, user_address)) {
+        // Get user staked NFTs if they exist
+        let staked_nfts = get_user_staked_nfts_if_exists(user_address);
+        if (vector::is_empty(&staked_nfts)) {
             return vector::empty<UserRewardInfo>()
         };
-        
-        let staked_nfts = smart_table::borrow(&registry.staked_nfts, user_address);
         let all_rewards = vector::empty<UserRewardInfo>();
         let i = 0;
-        let len = vector::length(staked_nfts);
+        let len = vector::length(&staked_nfts);
         
         while (i < len) {
-            let nft_info = vector::borrow(staked_nfts, i);
+            let nft_info = vector::borrow(&staked_nfts, i);
             let token_obj = object::address_to_object<Token>(nft_info.nft_object_address);
             
             // Get staking pool data to get the metadata
@@ -424,10 +420,10 @@ module movement_staking::nft_staking
                     // Calculate total rewards for this FA type across all user's tokens
                     let total_fa_rewards = 0u64;
                     let k = 0;
-                    let staked_len = vector::length(staked_nfts);
+                    let staked_len = vector::length(&staked_nfts);
                     
                     while (k < staked_len) {
-                        let nft_info_k = vector::borrow(staked_nfts, k);
+                        let nft_info_k = vector::borrow(&staked_nfts, k);
                         let token_obj_k = object::address_to_object<Token>(nft_info_k.nft_object_address);
                         let creator_addr_k = token::creator(token_obj_k);
                         let staking_address_k = get_resource_address(creator_addr_k, nft_info_k.collection_addr);
@@ -482,19 +478,17 @@ module movement_staking::nft_staking
     #[view]
     /// Returns all unique fungible asset metadata that a user has staked NFTs for
     public fun get_user_reward_metadata_types(user_address: address): vector<Object<fungible_asset::Metadata>> acquires StakedNFTsRegistry, MovementStaking, ResourceInfo {
-        // Check if user has any staked NFTs
-        let registry = borrow_global<StakedNFTsRegistry>(@movement_staking);
-        if (!smart_table::contains(&registry.staked_nfts, user_address)) {
+        // Get user staked NFTs if they exist
+        let staked_nfts = get_user_staked_nfts_if_exists(user_address);
+        if (vector::is_empty(&staked_nfts)) {
             return vector::empty<Object<fungible_asset::Metadata>>()
         };
-        
-        let staked_nfts = smart_table::borrow(&registry.staked_nfts, user_address);
         let metadata_types = vector::empty<Object<fungible_asset::Metadata>>();
         let i = 0;
-        let len = vector::length(staked_nfts);
+        let len = vector::length(&staked_nfts);
         
         while (i < len) {
-            let nft_info = vector::borrow(staked_nfts, i);
+            let nft_info = vector::borrow(&staked_nfts, i);
             
             // Get staking pool data to get the metadata
             let creator_addr = token::creator(object::address_to_object<Token>(nft_info.nft_object_address));
@@ -914,33 +908,14 @@ module movement_staking::nft_staking
     #[view]
     /// Returns all staked NFTs for a specific user address
     public fun get_staked_nfts(user_address: address): vector<StakedNFTInfo> acquires StakedNFTsRegistry {
-        if (!exists<StakedNFTsRegistry>(@movement_staking)) {
-            return vector::empty<StakedNFTInfo>()
-        };
-        
-        let registry = borrow_global<StakedNFTsRegistry>(@movement_staking);
-        if (!smart_table::contains(&registry.staked_nfts, user_address)) {
-            return vector::empty<StakedNFTInfo>()
-        };
-        
-        let user_staked_nfts = smart_table::borrow(&registry.staked_nfts, user_address);
-        *user_staked_nfts
+        get_user_staked_nfts_if_exists(user_address)
     }
 
     #[view]
     /// Returns the number of staked NFTs for a specific user address
     public fun get_staked_nfts_count(user_address: address): u64 acquires StakedNFTsRegistry {
-        if (!exists<StakedNFTsRegistry>(@movement_staking)) {
-            return 0
-        };
-        
-        let registry = borrow_global<StakedNFTsRegistry>(@movement_staking);
-        if (!smart_table::contains(&registry.staked_nfts, user_address)) {
-            return 0
-        };
-        
-        let user_staked_nfts = smart_table::borrow(&registry.staked_nfts, user_address);
-        vector::length(user_staked_nfts)
+        let staked_nfts = get_user_staked_nfts_if_exists(user_address);
+        vector::length(&staked_nfts)
     }
 
     /// Helper function to freeze a user's account for a specific FA metadata
@@ -977,6 +952,21 @@ module movement_staking::nft_staking
         let staking_address = get_resource_address(creator_addr, collection_addr);
         assert!(exists<MovementStaking>(staking_address), ENO_STAKING);
         staking_address
+    }
+
+    /// Gets user staked NFTs if they exist, returns empty vector if user has no staked NFTs
+    fun get_user_staked_nfts_if_exists(user_address: address): vector<StakedNFTInfo> acquires StakedNFTsRegistry {
+        if (!exists<StakedNFTsRegistry>(@movement_staking)) {
+            return vector::empty<StakedNFTInfo>()
+        };
+        
+        let registry = borrow_global<StakedNFTsRegistry>(@movement_staking);
+        if (!smart_table::contains(&registry.staked_nfts, user_address)) {
+            return vector::empty<StakedNFTInfo>()
+        };
+        
+        let user_staked_nfts = smart_table::borrow(&registry.staked_nfts, user_address);
+        *user_staked_nfts
     }
 
     #[test_only]
