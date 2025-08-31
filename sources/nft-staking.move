@@ -329,12 +329,7 @@ module movement_staking::nft_staking
             
             // Calculate seed for the reward treasury using collection address + token address
             // This must match the seed generation in stake_token
-            let seed = to_bytes(&nft_info.collection_addr);
-            let seed2 = to_bytes(&nft_info.nft_object_address);
-            // Concatenate the byte vectors
-            let combined_seed = vector::empty<u8>();
-            vector::append(&mut combined_seed, seed);
-            vector::append(&mut combined_seed, seed2);
+            let combined_seed = generate_combined_seed(nft_info.collection_addr, nft_info.nft_object_address);
             
             // Check if the seed exists in the registry before trying to get the resource address
             if (check_map_by_seed(user_address, combined_seed)) {
@@ -354,18 +349,8 @@ module movement_staking::nft_staking
                     
                     // Only calculate rewards if this staking pool uses the specified metadata
                     if (object::object_address(&staking_data.metadata) == object::object_address(&metadata)) {
-                        // Calculate accumulated rewards
-                        let now = timestamp::now_seconds();
-                        let time_diff = now - reward_data.start_time;
-                        
-                        // Calculate rewards: (time_diff * dpr * tokens) / 86400 - withdraw_amount
-                        let earned_rewards = ((time_diff * staking_data.dpr * reward_data.tokens) / 86400);
-                        let net_rewards = if (earned_rewards > reward_data.withdraw_amount) {
-                            earned_rewards - reward_data.withdraw_amount
-                        } else {
-                            0
-                        };
-                        
+                        // Calculate accumulated rewards using helper function
+                        let net_rewards = calculate_accumulated_rewards(reward_data.start_time, staking_data.dpr, reward_data.tokens, reward_data.withdraw_amount);
                         total_rewards = total_rewards + net_rewards;
                     };
                 };
@@ -435,24 +420,13 @@ module movement_staking::nft_staking
                             // Only include tokens from the same FA type
                             if (fa_address_k == fa_address) {
                                 let token_addr_k = object::object_address(&token_obj_k);
-                                let seed_k = to_bytes(&nft_info_k.collection_addr);
-                                let seed2_k = to_bytes(&token_addr_k);
-                                let combined_seed_k = vector::empty<u8>();
-                                vector::append(&mut combined_seed_k, seed_k);
-                                vector::append(&mut combined_seed_k, seed2_k);
+                                let combined_seed_k = generate_combined_seed(nft_info_k.collection_addr, token_addr_k);
                                 
                                 if (check_map_by_seed(user_address, combined_seed_k)) {
                                     let reward_treasury_address_k = get_resource_address_by_seed(user_address, combined_seed_k);
                                     if (exists<MovementReward>(reward_treasury_address_k)) {
                                         let reward_data_k = borrow_global<MovementReward>(reward_treasury_address_k);
-                                        let now = timestamp::now_seconds();
-                                        let time_diff = now - reward_data_k.start_time;
-                                        let earned_rewards = ((time_diff * staking_data_k.dpr * reward_data_k.tokens) / 86400);
-                                        let token_rewards = if (earned_rewards > reward_data_k.withdraw_amount) {
-                                            earned_rewards - reward_data_k.withdraw_amount
-                                        } else {
-                                            0
-                                        };
+                                        let token_rewards = calculate_accumulated_rewards(reward_data_k.start_time, staking_data_k.dpr, reward_data_k.tokens, reward_data_k.withdraw_amount);
                                         total_fa_rewards = total_fa_rewards + token_rewards;
                                     };
                                 };
@@ -593,12 +567,7 @@ module movement_staking::nft_staking
         assert!(staking_data.state, ESTOPPED);
         // seed for reward vault mapping: collection address + token address
         let token_addr = object::object_address(&nft);
-        let seed = to_bytes(&collection_addr);
-        let seed2 = to_bytes(&token_addr);
-        // Concatenate the byte vectors
-        let combined_seed = vector::empty<u8>();
-        vector::append(&mut combined_seed, seed);
-        vector::append(&mut combined_seed, seed2);
+        let combined_seed = generate_combined_seed(collection_addr, token_addr);
         //allowing restaking
         let should_pass_restake = check_map_by_seed(staker_addr, combined_seed);
         if (should_pass_restake) {
@@ -777,12 +746,7 @@ module movement_staking::nft_staking
         //getting the seeds
         // Generate seed using collection address + token address
         let token_addr = object::object_address(&token_obj);
-        let seed = to_bytes(&collection_addr);
-        let seed2 = to_bytes(&token_addr);
-        // Concatenate the byte vectors
-        let combined_seed = vector::empty<u8>();
-        vector::append(&mut combined_seed, seed);
-        vector::append(&mut combined_seed, seed2);
+        let combined_seed = generate_combined_seed(collection_addr, token_addr);
         //getting reward treasury address which has the tokens
         let reward_treasury_address = get_resource_address_by_seed(staker_addr, combined_seed);
         assert!(exists<MovementReward>(reward_treasury_address), ENO_STAKING);
@@ -968,6 +932,8 @@ module movement_staking::nft_staking
         let user_staked_nfts = smart_table::borrow(&registry.staked_nfts, user_address);
         *user_staked_nfts
     }
+
+
 
     #[test_only]
     public fun test_init_registries(token_staking: &signer) {
