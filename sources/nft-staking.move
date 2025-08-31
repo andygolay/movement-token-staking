@@ -190,8 +190,7 @@ module movement_staking::nft_staking
         let creator_addr = signer::address_of(creator);
         //verify the creator has the collection
         let collection_addr = object::object_address(&collection_obj);
-        let staking_address = get_resource_address(creator_addr, collection_addr);
-        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);// the staking doesn't exists
+        let staking_address = get_and_validate_staking_address(creator_addr, collection_addr);
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         staking_data.dpr = dpr;
         
@@ -717,33 +716,20 @@ module movement_staking::nft_staking
         let collection_obj = token::collection_object(token_obj);
         let collection_addr = object::object_address(&collection_obj);
         let creator_addr = token::creator(token_obj);
-        let staking_address = get_resource_address(creator_addr, collection_addr);
-        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);// the staking doesn't exists
+        let staking_address = get_and_validate_staking_address(creator_addr, collection_addr);
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         let staking_treasury_signer_from_cap = account::create_signer_with_capability(&staking_data.treasury_cap);
         assert!(staking_data.state, ESTOPPED);
         // Generate seed using collection address + token address
         let token_addr = object::object_address(&token_obj);
-        let seed = to_bytes(&collection_addr);
-        let seed2 = to_bytes(&token_addr);
-        // Concatenate the byte vectors
-        let combined_seed = vector::empty<u8>();
-        vector::append(&mut combined_seed, seed);
-        vector::append(&mut combined_seed, seed2);
+        let combined_seed = generate_combined_seed(collection_addr, token_addr);
         let reward_treasury_address = get_resource_address_by_seed(staker_addr, combined_seed);
         assert!(exists<MovementReward>(reward_treasury_address), ENO_STAKING);
         let reward_data = borrow_global_mut<MovementReward>(reward_treasury_address);
         assert!(reward_data.staker==staker_addr, ESTAKER_MISMATCH);
         
         // Calculate rewards consistently with the helper function logic
-        let now = timestamp::now_seconds();
-        let time_diff = now - reward_data.start_time;
-        let earned_rewards = ((time_diff * staking_data.dpr * reward_data.tokens) / 86400);
-        let release_amount = if (earned_rewards > reward_data.withdraw_amount) {
-            earned_rewards - reward_data.withdraw_amount
-        } else {
-            0
-        };
+        let release_amount = calculate_accumulated_rewards(reward_data.start_time, staking_data.dpr, reward_data.tokens, reward_data.withdraw_amount);
         if (staking_data.amount<release_amount)
         {
             staking_data.state=false;
@@ -847,6 +833,16 @@ module movement_staking::nft_staking
     }
 
     // Helper functions
+
+    /// Generates a combined seed from collection and token addresses for reward treasury mapping
+    fun generate_combined_seed(collection_addr: address, token_addr: address): vector<u8> {
+        let seed = to_bytes(&collection_addr);
+        let seed2 = to_bytes(&token_addr);
+        let combined_seed = vector::empty<u8>();
+        vector::append(&mut combined_seed, seed);
+        vector::append(&mut combined_seed, seed2);
+        combined_seed
+    }
 
     fun create_add_resource_info(account: &signer, collection_addr: address, resource: address) acquires ResourceInfo {
         let account_addr = signer::address_of(account);
@@ -962,6 +958,25 @@ module movement_staking::nft_staking
         assert!(exists<MovementStaking>(staking_address), ENO_STAKING);
         let staking_data = borrow_global<MovementStaking>(staking_address);
         staking_data.metadata
+    }
+
+    /// Calculates accumulated rewards for given reward and staking parameters
+    fun calculate_accumulated_rewards(start_time: u64, dpr: u64, tokens: u64, withdraw_amount: u64): u64 {
+        let now = timestamp::now_seconds();
+        let time_diff = now - start_time;
+        let earned_rewards = ((time_diff * dpr * tokens) / 86400);
+        if (earned_rewards > withdraw_amount) {
+            earned_rewards - withdraw_amount
+        } else {
+            0
+        }
+    }
+
+    /// Validates and returns staking address for a given creator and collection
+    fun get_and_validate_staking_address(creator_addr: address, collection_addr: address): address acquires ResourceInfo {
+        let staking_address = get_resource_address(creator_addr, collection_addr);
+        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);
+        staking_address
     }
 
     #[test_only]
