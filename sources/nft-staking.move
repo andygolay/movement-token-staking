@@ -189,8 +189,7 @@ module movement_staking::nft_staking
     ) acquires MovementStaking, ResourceInfo {
         let creator_addr = signer::address_of(creator);
         //verify the creator has the collection
-        let collection_addr = object::object_address(&collection_obj);
-        let staking_address = get_and_validate_staking_address(creator_addr, collection_addr);
+        let staking_address = get_staking_address(creator_addr, collection_obj);
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         staking_data.dpr = dpr;
         
@@ -204,9 +203,7 @@ module movement_staking::nft_staking
     ) acquires MovementStaking, ResourceInfo {
         let creator_addr = signer::address_of(creator);
         //get staking address
-        let collection_addr = object::object_address(&collection_obj);
-        let staking_address = get_resource_address(creator_addr, collection_addr);
-        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);// the staking doesn't exists
+        let staking_address = get_staking_address(creator_addr, collection_obj);
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         staking_data.state = false;
         
@@ -221,10 +218,7 @@ module movement_staking::nft_staking
         ) acquires MovementStaking, ResourceInfo {
         let creator_addr = signer::address_of(creator);
         //verify the creator has the collection
-         assert!(exists<ResourceInfo>(creator_addr), ENO_STAKING);
-        let collection_addr = object::object_address(&collection_obj);
-        let staking_address = get_resource_address(creator_addr, collection_addr);
-        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);// the staking doesn't exists       
+        let staking_address = get_staking_address(creator_addr, collection_obj);
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         // Transfer FA from creator to staking treasury store
         primary_fungible_store::transfer(creator, staking_data.metadata, staking_address, amount);
@@ -242,11 +236,7 @@ module movement_staking::nft_staking
     ) acquires MovementStaking, ResourceInfo {
         let creator_addr = signer::address_of(creator);
         // Verify the creator has the collection
-        assert!(exists<ResourceInfo>(creator_addr), ENO_STAKING);
-        let collection_addr = object::object_address(&collection_obj);
-        let staking_address = get_resource_address(creator_addr, collection_addr);
-        assert!(exists<MovementStaking>(staking_address), ENO_STAKING);
-        
+        let staking_address = get_staking_address(creator_addr, collection_obj);
         let staking_data = borrow_global_mut<MovementStaking>(staking_address);
         // Re-enable staking
         staking_data.state = true;
@@ -800,6 +790,14 @@ module movement_staking::nft_staking
         vector::append(&mut combined_seed, seed);
         vector::append(&mut combined_seed, seed2);
         combined_seed
+    }
+
+    /// Extracts collection address and staking address from collection object and creator address
+    fun get_staking_address(creator_addr: address, collection_obj: Object<Collection>): address acquires ResourceInfo {
+        assert!(exists<ResourceInfo>(creator_addr), ENO_STAKING);
+        let collection_addr = object::object_address(&collection_obj);
+        let staking_address = get_and_validate_staking_address(creator_addr, collection_addr);
+        staking_address
     }
 
     fun create_add_resource_info(account: &signer, collection_addr: address, resource: address) acquires ResourceInfo {
