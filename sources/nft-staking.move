@@ -18,6 +18,7 @@ module movement_staking::nft_staking
     use movement_staking::freeze_registry;
     use aptos_std::simple_map::{Self, SimpleMap};
     use aptos_std::smart_table::{Self, SmartTable};
+    use aptos_std::option::{Self as option, Option};
     use std::bcs::to_bytes;
 
     // Staking resource for collection
@@ -36,6 +37,14 @@ module movement_staking::nft_staking
         treasury_cap: account::SignerCapability,
         // if true, freeze rewards on claim (pre-TGE soulbound)
         is_locked: bool,
+        // Optional previous reward metadata (XP) before switch
+        prev_metadata: Option<Object<fungible_asset::Metadata>>,
+        // Time when switch from XP -> Real occurred (0 if never)
+        switch_time: u64,
+        // Conversion: how many smallest units of Real per 1 XP unit
+        conversion_per_xp: u64,
+        // Stored DPR used before switch to compute pre-switch accrual precisely
+        prev_dpr: u64,
     }
 
     // Reward vault for staking
@@ -47,7 +56,7 @@ module movement_staking::nft_staking
         // staked token address
         token_address: address,
         //withdrawn amount
-        withdraw_amount: u64,
+        withdrawn_amount: u64,
         //treasury_cap
         treasury_cap: account::SignerCapability,
         //time
@@ -174,6 +183,10 @@ module movement_staking::nft_staking
         metadata, 
         treasury_cap: staking_treasury_cap,
         is_locked,
+        prev_metadata: option::none(),
+        switch_time: 0,
+        conversion_per_xp: 0,
+        prev_dpr: 0,
         });
         
         // Add to global staking pools registry (just for discovery)
@@ -242,6 +255,45 @@ module movement_staking::nft_staking
         staking_data.state = true;
         
 
+    }
+
+    /// Creator switches from XP FA to Real FA and sets conversion and new DPR
+    public entry fun set_conversion_and_switch(
+        creator: &signer,
+        collection_obj: Object<Collection>,
+        new_metadata: Object<fungible_asset::Metadata>,
+        conversion_per_xp: u64,
+        new_dpr: u64,
+        deposit_amount: u64,
+    ) acquires MovementStaking, ResourceInfo {
+        let creator_addr = signer::address_of(creator);
+        let staking_address = get_staking_address(creator_addr, collection_obj);
+        let staking_data = borrow_global_mut<MovementStaking>(staking_address);
+        // Record previous metadata and DPR, set switch timestamp
+        staking_data.prev_metadata = option::some(staking_data.metadata);
+        staking_data.prev_dpr = staking_data.dpr;
+        staking_data.switch_time = timestamp::now_seconds();
+        // Apply new settings
+        staking_data.metadata = new_metadata;
+        staking_data.conversion_per_xp = conversion_per_xp;
+        staking_data.dpr = new_dpr;
+        // Deposit the new FA into the pool treasury in the same call
+        if (deposit_amount > 0) {
+            primary_fungible_store::transfer(creator, staking_data.metadata, staking_address, deposit_amount);
+            staking_data.amount = staking_data.amount + deposit_amount;
+        };
+    }
+
+    /// Creator can update conversion rate later (optional)
+    public entry fun update_conversion_rate(
+        creator: &signer,
+        collection_obj: Object<Collection>,
+        conversion_per_xp: u64,
+    ) acquires MovementStaking, ResourceInfo {
+        let creator_addr = signer::address_of(creator);
+        let staking_address = get_staking_address(creator_addr, collection_obj);
+        let staking_data = borrow_global_mut<MovementStaking>(staking_address);
+        staking_data.conversion_per_xp = conversion_per_xp;
     }
 
     /// Adds a collection to the allowed list for staking (admin only)
@@ -340,7 +392,16 @@ module movement_staking::nft_staking
                     // Only calculate rewards if this staking pool uses the specified metadata
                     if (object::object_address(&staking_data.metadata) == object::object_address(&metadata)) {
                         // Calculate accumulated rewards using helper function
-                        let net_rewards = calculate_accumulated_rewards(reward_data.start_time, staking_data.dpr, reward_data.tokens, reward_data.withdraw_amount);
+                        let net_rewards = calculate_accumulated_rewards_with_switch(
+                            reward_data.start_time,
+                            reward_data.tokens,
+                            reward_data.withdrawn_amount,
+                            staking_data.prev_dpr,
+                            staking_data.dpr,
+                            staking_data.switch_time,
+                            staking_data.conversion_per_xp,
+                            option::is_some(&staking_data.prev_metadata),
+                        );
                         total_rewards = total_rewards + net_rewards;
                     };
                 };
@@ -416,7 +477,16 @@ module movement_staking::nft_staking
                                     let reward_treasury_address_k = get_resource_address_by_seed(user_address, combined_seed_k);
                                     if (exists<MovementReward>(reward_treasury_address_k)) {
                                         let reward_data_k = borrow_global<MovementReward>(reward_treasury_address_k);
-                                        let token_rewards = calculate_accumulated_rewards(reward_data_k.start_time, staking_data_k.dpr, reward_data_k.tokens, reward_data_k.withdraw_amount);
+                                        let token_rewards = calculate_accumulated_rewards_with_switch(
+                                            reward_data_k.start_time,
+                                            reward_data_k.tokens,
+                                            reward_data_k.withdrawn_amount,
+                                            staking_data_k.prev_dpr,
+                                            staking_data_k.dpr,
+                                            staking_data_k.switch_time,
+                                            staking_data_k.conversion_per_xp,
+                                            option::is_some(&staking_data_k.prev_metadata),
+                                        );
                                         total_fa_rewards = total_fa_rewards + token_rewards;
                                     };
                                 };
@@ -567,7 +637,7 @@ module movement_staking::nft_staking
             let now = timestamp::now_seconds();
             reward_data.tokens=1;
             reward_data.start_time=now;
-            reward_data.withdraw_amount=0;
+            reward_data.withdrawn_amount=0;
             reward_data.token_address = object::object_address(&nft);
             object::transfer(staker, nft, reward_treasury_address);
 
@@ -584,7 +654,7 @@ module movement_staking::nft_staking
             staker: staker_addr,
             collection: collection_addr,
             token_address: token_addr,
-            withdraw_amount: 0,
+            withdrawn_amount: 0,
             treasury_cap: reward_treasury_cap,
             start_time: now,
             tokens: 1,
@@ -681,8 +751,17 @@ module movement_staking::nft_staking
         let reward_data = borrow_global_mut<MovementReward>(reward_treasury_address);
         assert!(reward_data.staker==staker_addr, ESTAKER_MISMATCH);
         
-        // Calculate rewards consistently with the helper function logic
-        let release_amount = calculate_accumulated_rewards(reward_data.start_time, staking_data.dpr, reward_data.tokens, reward_data.withdraw_amount);
+        // Calculate rewards with optional XP->Real switch logic
+        let release_amount = calculate_accumulated_rewards_with_switch(
+            reward_data.start_time,
+            reward_data.tokens,
+            reward_data.withdrawn_amount,
+            staking_data.prev_dpr,
+            staking_data.dpr,
+            staking_data.switch_time,
+            staking_data.conversion_per_xp,
+            option::is_some(&staking_data.prev_metadata),
+        );
         if (staking_data.amount<release_amount)
         {
             staking_data.state=false;
@@ -697,7 +776,7 @@ module movement_staking::nft_staking
         };
         
         staking_data.amount=staking_data.amount-release_amount;
-        reward_data.withdraw_amount=reward_data.withdraw_amount+release_amount;
+        reward_data.withdrawn_amount=reward_data.withdrawn_amount+release_amount;
     }
 
     /// Claims accumulated staking rewards for multiple staked tokens in a single transaction
@@ -751,7 +830,7 @@ module movement_staking::nft_staking
         object::transfer(&reward_treasury_signer_from_cap, token_obj, staker_addr);
         reward_data.tokens=0;
         reward_data.start_time=0;
-        reward_data.withdraw_amount=0;
+        reward_data.withdrawn_amount=0;
 
         // Deregister the staked NFT
         if (exists<StakedNFTsRegistry>(@movement_staking)) {
@@ -897,15 +976,45 @@ module movement_staking::nft_staking
         staking_data.metadata
     }
 
-    /// Calculates accumulated rewards for given reward and staking parameters
-    fun calculate_accumulated_rewards(start_time: u64, dpr: u64, tokens: u64, withdraw_amount: u64): u64 {
+    /// Calculates accumulated rewards over an interval [start, end) with given DPR and token count
+    fun calc_interval_rewards(start_time: u64, end_time: u64, dpr: u64, tokens: u64): u64 {
+        if (end_time <= start_time) 0 else ((end_time - start_time) * dpr * tokens) / 86400
+    }
+
+    /// Calculates accumulated rewards considering an optional XP->Real switch.
+    /// If `had_switch` is false, behaves like legacy: accrue with `dpr_after` from start_time to now and subtract withdrawn_amount.
+    /// If true, splits at `switch_time`: pre uses `dpr_before` (XP), converts via `conversion_per_xp`, post uses `dpr_after` (Real).
+    fun calculate_accumulated_rewards_with_switch(
+        start_time: u64,
+        tokens: u64,
+        withdrawn_amount: u64,
+        dpr_before: u64,
+        dpr_after: u64,
+        switch_time: u64,
+        conversion_per_xp: u64,
+        had_switch: bool,
+    ): u64 {
         let now = timestamp::now_seconds();
-        let time_diff = now - start_time;
-        let earned_rewards = ((time_diff * dpr * tokens) / 86400);
-        if (earned_rewards > withdraw_amount) {
-            earned_rewards - withdraw_amount
+        if (!had_switch || switch_time == 0) {
+            let total = calc_interval_rewards(start_time, now, dpr_after, tokens);
+            if (total > withdrawn_amount) { total - withdrawn_amount } else { 0 }
         } else {
-            0
+            // Pre-switch accrual (XP units)
+            let pre_end = if (now < switch_time) { now } else { switch_time };
+            let earned_pre_xp = calc_interval_rewards(start_time, pre_end, dpr_before, tokens);
+            // Apply previous withdrawals first against pre-switch XP
+            let paid_applied_to_pre = if (withdrawn_amount > earned_pre_xp) { earned_pre_xp } else { withdrawn_amount };
+            let pending_pre_xp = earned_pre_xp - paid_applied_to_pre;
+            // Convert pending XP to Real
+            let converted_real_from_pre = pending_pre_xp * conversion_per_xp;
+
+            // Post-switch accrual (Real units)
+            let post_start = if (start_time > switch_time) { start_time } else { switch_time };
+            let earned_post_real = if (now > switch_time) { calc_interval_rewards(post_start, now, dpr_after, tokens) } else { 0 };
+            let paid_remaining = withdrawn_amount - paid_applied_to_pre;
+            let pending_post_real = if (earned_post_real > paid_remaining) { earned_post_real - paid_remaining } else { 0 };
+
+            converted_real_from_pre + pending_post_real
         }
     }
 
