@@ -1919,4 +1919,134 @@ module movement_staking::nft_staking_tests {
         let updated_pools = nft_staking::view_active_staking_pools();
         assert!(vector::length(&updated_pools) == 2, 11);
     }
-} 
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
+    fun test_no_switch_legacy_behavior(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+        framework: signer,
+    ) {
+        let creator_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+
+        timestamp::set_time_has_started_for_testing(&framework);
+
+        aptos_framework::account::create_account_for_test(creator_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+
+        nft_staking::test_init_registries_with_admin(&token_staking, creator_addr);
+
+        // Use banana_a as the only FA (no switch)
+        banana_a::test_init(&token_staking);
+        let metadata = banana_a::get_metadata();
+        banana_a::mint(&token_staking, creator_addr, 1000000);
+
+        // Create collection and allow
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Legacy DPR Collection"),
+            string::utf8(b"Legacy DPR Collection"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Legacy DPR Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        nft_staking::add_allowed_collection(&creator, collection_obj);
+
+        // Create staking with dpr=20 and fund with banana_a
+        nft_staking::create_staking(&creator, 20, collection_obj, 50000, metadata, false);
+
+        // Mint and transfer NFT to receiver
+        let token_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Legacy DPR Collection"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token X"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token_addr = object::address_from_constructor_ref(&token_ref);
+        object::transfer(&creator, object::address_to_object<Token>(token_addr), receiver_addr);
+
+        // Stake, advance one day, check rewards, claim, then zero
+        nft_staking::stake_token(&receiver, object::address_to_object<Token>(token_addr));
+        timestamp::update_global_time_for_test(86400 * 1000000);
+        let before_claim = nft_staking::get_user_accumulated_rewards(receiver_addr, metadata);
+        assert!(before_claim == 20, 100);
+        nft_staking::claim_reward(&receiver, object::address_to_object<Token>(token_addr));
+        let after_claim = nft_staking::get_user_accumulated_rewards(receiver_addr, metadata);
+        assert!(after_claim == 0, 101);
+    }
+
+    #[test(creator = @0xa11ce, receiver = @0xb0b, token_staking = @movement_staking, framework = @0x1)]
+    fun test_switch_xp_to_real_with_conversion(
+        creator: signer,
+        receiver: signer,
+        token_staking: signer,
+        framework: signer,
+    ) {
+        let creator_addr = signer::address_of(&creator);
+        let receiver_addr = signer::address_of(&receiver);
+
+        timestamp::set_time_has_started_for_testing(&framework);
+
+        aptos_framework::account::create_account_for_test(creator_addr);
+        aptos_framework::account::create_account_for_test(receiver_addr);
+
+        nft_staking::test_init_registries_with_admin(&token_staking, creator_addr);
+
+        // Init both FAs: banana_a = XP, banana_b = Real
+        banana_a::test_init(&token_staking);
+        banana_b::test_init(&token_staking);
+        let xp_md = banana_a::get_metadata();
+        let real_md = banana_b::get_metadata();
+        // Fund creator for both FAs
+        banana_a::mint(&token_staking, creator_addr, 1000000);
+        banana_b::mint(&token_staking, creator_addr, 1000000);
+
+        // Create collection and allow
+        collection::create_unlimited_collection(
+            &creator,
+            string::utf8(b"Switch Test Collection"),
+            string::utf8(b"Switch Test Collection"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let collection_addr = collection::create_collection_address(&creator_addr, &string::utf8(b"Switch Test Collection"));
+        let collection_obj = object::address_to_object<Collection>(collection_addr);
+        nft_staking::add_allowed_collection(&creator, collection_obj);
+
+        // Start with XP rewards (banana_a), small initial funding
+        nft_staking::create_staking(&creator, 20, collection_obj, 1000, xp_md, false);
+
+        // Mint NFT and stake
+        let token_ref = token::create_named_token(
+            &creator,
+            string::utf8(b"Switch Test Collection"),
+            string::utf8(b"desc"),
+            string::utf8(b"Token Y"),
+            option::none(),
+            string::utf8(b"uri"),
+        );
+        let token_addr = object::address_from_constructor_ref(&token_ref);
+        object::transfer(&creator, object::address_to_object<Token>(token_addr), receiver_addr);
+        nft_staking::stake_token(&receiver, object::address_to_object<Token>(token_addr));
+
+        // Accrue 1 day at dpr=20 => 20 XP
+        timestamp::update_global_time_for_test(86400 * 1000000);
+
+        // Switch to Real with conversion_per_xp = 100 (=> expect 2000 Real for pre-switch 20 XP), new dpr = 0
+        nft_staking::set_conversion_and_switch(&creator, collection_obj, real_md, 100, 0, 50000);
+        // Deposit included in the switch call above
+
+        // Before claim, view should show converted pending in Real
+        let pending_real = nft_staking::get_user_accumulated_rewards(receiver_addr, real_md);
+        assert!(pending_real == 2000, 200);
+
+        // Claim pays in Real
+        nft_staking::claim_reward(&receiver, object::address_to_object<Token>(token_addr));
+        let after_claim_real = nft_staking::get_user_accumulated_rewards(receiver_addr, real_md);
+        assert!(after_claim_real == 0, 201);
+    }
+}
